@@ -1,7 +1,7 @@
 {
   "name": "threadcut",
-  "version": "1.0.0",
-  "description": "An Electron application with React and TypeScript",
+  "version": "1.0.2",
+  "description": "DunChin rảnh rỗi nên tự vide con app cho zui",
   "license": "MIT",
   "main": "./out/main/index.js",
   "author": "example.com",

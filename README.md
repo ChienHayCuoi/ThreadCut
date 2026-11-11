@@ -15,9 +15,7 @@ Nhấp vào liên kết bên dưới để tải phiên bản mới nhất cho h
 | Hệ điều hành | Định dạng | Tải về |
 | :--- | :--- | :--- |
 | **Windows** | `.exe` (Setup 64-bit) | [⬇️ **Tải bản Windows (.exe)**](https://github.com/ChienHayCuoi/ThreadCut/releases/latest) |
-| **Linux** | `.AppImage`, `.deb` | [⬇️ **Tải bản Linux**](https://github.com/ChienHayCuoi/ThreadCut/releases/latest) |
-| **macOS** | `.dmg` | [⬇️ **Tải bản macOS (.dmg)**](https://github.com/ChienHayCuoi/ThreadCut/releases/latest) |
-
+| **Linux** | `.AppImage`, `.deb` | [⬇️ **Tải bản Linux**](https://github.com/ChienHayCuoi/ThreadCut/releases/latest) 
 ---
 
 ## ✨ Tính năng nổi bật
@@ -31,8 +29,8 @@ Nhấp vào liên kết bên dưới để tải phiên bản mới nhất cho h
   - Cho phép người dùng trực tiếp chỉnh sửa nội dung hoặc tick/bỏ chọn từng bình luận trước khi sản xuất video.
 
 - 🎙️ **Thuyết minh tự nhiên với Edge-TTS**:
-  - Tích hợp giọng đọc AI tiếng Việt mượt mà, truyền cảm (`vi-VN-HoaiMyNeural`, `vi-VN-NamMinhNeural`...).
-  - Hỗ trợ tùy chỉnh tốc độ nói (1.0x, 1.1x, 1.2x, 1.25x, 1.35x) phù hợp với nhịp độ video ngắn.
+  - Tích hợp giọng đọc AI tiếng Việt mượt mà, truyền cảm.
+  - Hỗ trợ tùy chỉnh tốc độ nói phù hợp với nhịp độ video ngắn.
   - Trích xuất chính xác timestamp từng từ (word-level timestamps) để đồng bộ âm thanh và phụ đề chuẩn mili-giây.
 
 - 🎨 **Hiệu ứng chữ nhảy Karaoke & Card Threads**:
@@ -79,8 +77,7 @@ npm install
 ### 3. Cấu hình ban đầu
 Mở ứng dụng và nhấp vào biểu tượng **⚙️ Cài đặt** ở góc trên bên phải để thiết lập:
 - **Google Gemini API Key**: Lấy API Key miễn phí từ [Google AI Studio](https://aistudio.google.com/).
-- **Giọng đọc mặc định**: Chọn giọng nữ (Hoài My) hoặc giọng nam (Nam Minh).
-- **Tốc độ đọc**: Khuyên dùng `1.20x` cho video ngắn TikTok/Shorts.
+- **Giọng đọc mặc định**: Chọn giọng nữ (Dun) hoặc giọng nam (Chin).
 - **Thư mục lưu video**: Chọn nơi lưu trữ video sau khi render (mặc định lưu vào thư mục `Videos/ThreadCut` của người dùng).
 
 ### 4. Chạy chế độ Development
@@ -127,7 +124,7 @@ flowchart LR
    - Tùy chỉnh tick chọn/bỏ chọn các bình luận muốn đưa vào video.
    - Chỉnh sửa lại câu từ nếu muốn tối ưu hóa kịch bản đọc.
 4. **Bước 4**: Tại phần **Video nền (9:16)**, bấm **"Chọn file"** để tải lên video nền cá nhân (gameplay, video chill, v.v.). Bạn có thể xem trước chuyển động ngay trên khung điện thoại bên phải.
-5. **Bước 5**: Chọn tốc độ đọc phù hợp (ví dụ: `1.20x`) và bấm **"🚀 Bắt đầu sản xuất Video 9:16"**.
+5. **Bước 5**: Chọn tốc độ đọc phù hợp và bấm **"🚀 Bắt đầu sản xuất Video 9:16"**.
 6. **Bước 6**: Sau khi render hoàn tất, chuyển sang tab **"🎬 Video xuất"** để xem video trực tiếp hoặc bấm **"📂 Mở thư mục video"** để nhận file thành phẩm.
 
 ---

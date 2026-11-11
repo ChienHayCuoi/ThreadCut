@@ -1,6 +1,22 @@
 # ThreadCut 🎬
 
+[![Tải ThreadCut Mới Nhất](https://img.shields.io/badge/Download-Latest_Release-2563eb?style=for-the-badge&logo=github)](https://github.com/ChienHayCuoi/ThreadCut/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-blueviolet?style=for-the-badge)](https://github.com/ChienHayCuoi/ThreadCut/releases/latest)
+
 > **ThreadCut** là ứng dụng desktop (Electron + React + TypeScript) tự động hóa quy trình sản xuất **Video ngắn 9:16 (TikTok, YouTube Shorts, Facebook Reels)** từ bài viết và bình luận trên mạng xã hội **Threads**.
+
+---
+
+## 📥 Tải về ứng dụng (Downloads)
+
+Nhấp vào liên kết bên dưới để tải phiên bản mới nhất cho hệ điều hành của bạn:
+
+| Hệ điều hành | Định dạng | Tải về |
+| :--- | :--- | :--- |
+| **Windows** | `.exe` (Setup 64-bit) | [⬇️ **Tải bản Windows (.exe)**](https://github.com/ChienHayCuoi/ThreadCut/releases/latest) |
+| **Linux** | `.AppImage`, `.deb` | [⬇️ **Tải bản Linux**](https://github.com/ChienHayCuoi/ThreadCut/releases/latest) |
+| **macOS** | `.dmg` | [⬇️ **Tải bản macOS (.dmg)**](https://github.com/ChienHayCuoi/ThreadCut/releases/latest) |
 
 ---
 

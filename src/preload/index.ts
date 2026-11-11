@@ -1,14 +1,55 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import {
+  ThreadPostDetail,
+  ThreadComment,
+  AppSettings,
+  FullPipelineParams,
+  VideoJobProgress
+} from '../shared/types'
 
 // Custom APIs for ThreadCut renderer
 const api = {
-  crawlPost: (url: string) => ipcRenderer.invoke('crawler:fetch-post', url),
-  filterComments: (params: { apiKey: string; postText: string; comments: unknown[] }) =>
-    ipcRenderer.invoke('ai:filter-comments', params),
-  generateTts: (params: { text: string; voice?: string }) =>
+  // Settings
+  getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('settings:get'),
+  saveSettings: (settings: Partial<AppSettings>): Promise<AppSettings> =>
+    ipcRenderer.invoke('settings:save', settings),
+
+  // Pipeline steps
+  crawlPost: (url: string): Promise<ThreadPostDetail> =>
+    ipcRenderer.invoke('crawler:fetch-post', url),
+  filterComments: (params: {
+    apiKey?: string
+    model?: string
+    postText: string
+    comments: ThreadComment[]
+  }): Promise<ThreadComment[]> => ipcRenderer.invoke('ai:filter-comments', params),
+  generateTts: (params: { text: string; voice?: string; destPath?: string }) =>
     ipcRenderer.invoke('tts:generate', params),
-  renderVideo: (params: { templateConfig: unknown }) =>ipcRenderer.invoke('video:render', params)
+  renderCard: (params: { cardOptions: unknown; destPath?: string }) =>
+    ipcRenderer.invoke('card:render', params),
+  runFullPipeline: (params: FullPipelineParams): Promise<string> =>
+    ipcRenderer.invoke('pipeline:run-full', params),
+
+  // File dialogs & Shell
+  selectDirectory: (): Promise<string | null> => ipcRenderer.invoke('dialog:select-directory'),
+  selectVideo: (): Promise<string | null> => ipcRenderer.invoke('dialog:select-video'),
+  openPath: (targetPath: string): Promise<boolean> =>
+    ipcRenderer.invoke('shell:open-path', targetPath),
+  listPresetBackgrounds: (): Promise<Array<{ id: string; name: string; path: string }>> =>
+    ipcRenderer.invoke('template:list-presets'),
+  openTemplatesFolder: (): Promise<boolean> => ipcRenderer.invoke('shell:open-templates-folder'),
+
+  // Progress listener
+  onProgress: (callback: (progress: VideoJobProgress) => void): (() => void) => {
+    const subscription = (_event: Electron.IpcRendererEvent, progress: VideoJobProgress): void => {
+      callback(progress)
+    }
+    ipcRenderer.on('pipeline:progress', subscription)
+    return () => {
+      ipcRenderer.removeListener('pipeline:progress', subscription)
+    }
+  }
 }
 
 if (process.contextIsolated) {

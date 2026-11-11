@@ -12,6 +12,8 @@ export interface ThreadComment {
   timestamp?: number
   isPeak?: boolean
   selected?: boolean
+  score?: number
+  reason?: string
 }
 
 export interface ThreadPostDetail {
@@ -26,10 +28,37 @@ export interface ThreadPostDetail {
   comments: ThreadComment[]
 }
 
+export interface TtsWordTimestamp {
+  word: string
+  startMs: number
+  endMs: number
+}
+
+export interface TtsSegment {
+  id: string
+  type: 'post' | 'comment'
+  authorName: string
+  text: string
+  audioPath: string
+  durationSec: number
+  subtitles: TtsWordTimestamp[]
+  cardImagePath?: string
+}
+
+export type BackgroundMode = 'generator' | 'preset' | 'custom'
+
+export interface BackgroundPreset {
+  id: string
+  name: string
+  path: string
+}
+
 export interface VideoTemplateConfig {
   id: string
   name: string
-  backgroundVideoPath: string
+  bgMode?: BackgroundMode
+  generatorStyle?: 'midnight_blue' | 'cyber_purple' | 'emerald_dark' | 'sunset_glow'
+  backgroundVideoPath?: string
   bgmAudioPath?: string
   bgmVolume?: number
   aspectRatio: '9:16'
@@ -37,7 +66,14 @@ export interface VideoTemplateConfig {
 }
 
 export interface VideoJobProgress {
-  step: 'crawling' | 'filtering_ai' | 'generating_tts' | 'rendering_video' | 'completed' | 'error'
+  step:
+    | 'crawling'
+    | 'filtering_ai'
+    | 'generating_tts'
+    | 'rendering_cards'
+    | 'rendering_video'
+    | 'completed'
+    | 'error'
   percent: number
   message: string
   outputFilePath?: string
@@ -45,7 +81,18 @@ export interface VideoJobProgress {
 
 export interface AppSettings {
   geminiApiKey: string
-  outputDir: string
+  geminiModel: string
   defaultTtsVoice: string
+  ttsRate: string
+  outputDir: string
   backgroundTemplateDir: string
+  customFfmpegPath?: string
+}
+
+export interface FullPipelineParams {
+  post: ThreadPostDetail
+  selectedComments: ThreadComment[]
+  voice: string
+  rate?: string
+  template: VideoTemplateConfig
 }

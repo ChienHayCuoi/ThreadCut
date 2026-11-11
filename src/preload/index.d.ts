@@ -26,6 +26,7 @@ interface ThreadCutAPI {
   runFullPipeline: (params: FullPipelineParams) => Promise<string>
   selectDirectory: () => Promise<string | null>
   selectVideo: () => Promise<string | null>
+  selectFfmpeg: () => Promise<string | null>
   openPath: (targetPath: string) => Promise<boolean>
   listPresetBackgrounds: () => Promise<Array<{ id: string; name: string; path: string }>>
   openTemplatesFolder: () => Promise<boolean>

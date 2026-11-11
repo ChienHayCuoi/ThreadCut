@@ -1,4 +1,6 @@
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, app } from 'electron'
+import { join } from 'path'
+import { writeFileSync, existsSync, mkdirSync } from 'fs'
 import { ThreadPostDetail, ThreadComment } from '../../../shared/types'
 
 export class ThreadsCrawler {
@@ -23,12 +25,28 @@ export class ThreadsCrawler {
         }
       })
 
+      const detectedVideoUrls: string[] = []
+      win.webContents.session.webRequest.onBeforeRequest(
+        { urls: ['*://*.cdninstagram.com/*', '*://*.fbcdn.net/*'] },
+        (details, callback) => {
+          const u = details.url
+          if (
+            (u.includes('.mp4') || u.includes('/v/t') || u.includes('mime=video') || u.includes('_n.mp4')) &&
+            !detectedVideoUrls.includes(u)
+          ) {
+            console.log('[Crawler] Bắt được request video Threads:', u.slice(0, 100))
+            detectedVideoUrls.push(u)
+          }
+          callback({})
+        }
+      )
+
       const timeoutId = setTimeout(async () => {
         console.warn(
           '[Crawler] Quá thời gian chờ tải trang (18s), tiến hành bóc tách những gì đã có...'
         )
         if (win && !win.isDestroyed()) {
-          const result = await this.extractFromWindow(win, cleanUrl)
+          const result = await this.extractFromWindow(win, cleanUrl, detectedVideoUrls)
           win.destroy()
           win = null
           resolve(result)
@@ -45,7 +63,7 @@ export class ThreadsCrawler {
           if (!win || win.isDestroyed()) return
           clearTimeout(timeoutId)
           try {
-            const result = await this.extractFromWindow(win, cleanUrl)
+            const result = await this.extractFromWindow(win, cleanUrl, detectedVideoUrls)
             win.destroy()
             win = null
             resolve(result)
@@ -72,7 +90,11 @@ export class ThreadsCrawler {
     })
   }
 
-  private async extractFromWindow(win: BrowserWindow, url: string): Promise<ThreadPostDetail> {
+  private async extractFromWindow(
+    win: BrowserWindow,
+    url: string,
+    detectedVideoUrls: string[] = []
+  ): Promise<ThreadPostDetail> {
     try {
       // Cho scroll nhẹ nhiều lần xuống dưới để trigger Threads nạp toàn bộ bình luận
       await win.webContents.executeJavaScript(`
@@ -102,14 +124,25 @@ export class ThreadsCrawler {
               if (match) domUser = match[1];
             }
 
+            let videoUrl = '';
+            const videoEl = art.querySelector('video');
+            if (videoEl) {
+              videoUrl = videoEl.currentSrc || videoEl.src || '';
+              if (!videoUrl) {
+                const srcEl = videoEl.querySelector('source');
+                if (srcEl) videoUrl = srcEl.src || '';
+              }
+            }
+
             return {
               text: art.innerText || '',
               avatar: img ? img.src : '',
-              domUser
+              domUser,
+              videoUrl
             };
           });
         })()
-      `)) as Array<{ text: string; avatar: string; domUser: string }>
+      `)) as Array<{ text: string; avatar: string; domUser: string; videoUrl?: string }>
 
       if (Array.isArray(rawArticles) && rawArticles.length > 0) {
         // Trích xuất username từ URL: threads.net/@username/post/...
@@ -122,6 +155,26 @@ export class ThreadsCrawler {
         const mainText = first.content || 'Nội dung bài viết Threads'
         const mainAvatar = rawArticles[0].avatar || ''
         const mainLikes = first.likesCount
+
+        // 1.1 Tìm URL video của bài viết gốc
+        const mainVideoUrl = rawArticles[0].videoUrl || detectedVideoUrls[0] || undefined
+        let localVideoPath: string | undefined = undefined
+
+        if (mainVideoUrl) {
+          try {
+            console.log(`[Crawler] Bắt đầu tải video của bài viết: ${mainVideoUrl.slice(0, 80)}...`)
+            const tempDir = join(app.getPath('temp'), 'threadcut_media')
+            if (!existsSync(tempDir)) mkdirSync(tempDir, { recursive: true })
+            const dest = join(tempDir, `post_video_${Date.now()}.mp4`)
+            await this.downloadVideo(mainVideoUrl, dest)
+            if (existsSync(dest)) {
+              localVideoPath = dest
+              console.log(`[Crawler] Tải video bài viết thành công: ${dest}`)
+            }
+          } catch (dlErr) {
+            console.warn('[Crawler] Lỗi khi tải video bài viết về local:', dlErr)
+          }
+        }
 
         // 2. Phân tích các bình luận tiếp theo
         const comments: ThreadComment[] = []
@@ -143,7 +196,7 @@ export class ThreadsCrawler {
         }
 
         console.log(
-          `[Crawler] Bóc tách thành công bài viết của @${mainAuthor} (${mainLikes} likes) với ${comments.length} bình luận`
+          `[Crawler] Bóc tách thành công bài viết của @${mainAuthor} (${mainLikes} likes, ${localVideoPath ? 'Có Video' : 'Không có video'}) với ${comments.length} bình luận`
         )
 
         return {
@@ -154,6 +207,9 @@ export class ThreadsCrawler {
             avatarUrl: mainAvatar
           },
           text: mainText,
+          videoUrl: mainVideoUrl,
+          localVideoPath,
+          mediaUrls: mainVideoUrl ? [mainVideoUrl] : [],
           likesCount: mainLikes,
           commentsCount: comments.length,
           comments
@@ -164,6 +220,14 @@ export class ThreadsCrawler {
     }
 
     return this.getFallbackData(url)
+  }
+
+  private async downloadVideo(url: string, destPath: string): Promise<string> {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`HTTP ${res.status} when downloading video`)
+    const arrayBuffer = await res.arrayBuffer()
+    writeFileSync(destPath, Buffer.from(arrayBuffer))
+    return destPath
   }
 
   /**

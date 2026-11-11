@@ -145,6 +145,10 @@ export function registerIpcHandlers(): void {
 
       // Gắn ảnh Card vào từng segment tương ứng
       segments[0].cardImagePath = postCardPath
+      if (post.localVideoPath && existsSync(post.localVideoPath)) {
+        segments[0].mediaVideoPath = post.localVideoPath
+        console.log(`[Pipeline] Đã gắn video bài viết (${post.localVideoPath}) vào segment bài viết gốc`)
+      }
       for (let i = 0; i < commentCardPaths.length; i++) {
         if (segments[i + 1]) {
           segments[i + 1].cardImagePath = commentCardPaths[i]
@@ -205,6 +209,22 @@ export function registerIpcHandlers(): void {
       {
         properties: ['openFile'],
         filters: [{ name: 'Video Files', extensions: ['mp4', 'mov', 'webm', 'mkv'] }]
+      }
+    )
+    return result.filePaths[0] || null
+  })
+
+  // Chọn file FFmpeg executable thủ công
+  ipcMain.handle('dialog:select-ffmpeg', async () => {
+    const focusedWindow = BrowserWindow.getFocusedWindow()
+    const result = await dialog.showOpenDialog(
+      focusedWindow || (undefined as unknown as BrowserWindow),
+      {
+        properties: ['openFile'],
+        filters: [
+          { name: 'FFmpeg Executable', extensions: ['exe', '*'] },
+          { name: 'All Files', extensions: ['*'] }
+        ]
       }
     )
     return result.filePaths[0] || null

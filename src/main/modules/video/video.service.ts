@@ -1,4 +1,3 @@
-import { app } from 'electron'
 import { join } from 'path'
 import { existsSync, writeFileSync, mkdirSync } from 'fs'
 import { spawn } from 'child_process'
@@ -13,30 +12,68 @@ export class VideoRendererService {
   }
 
   private resolveFfmpegBinary(customPath?: string): string {
-    const candidates = [
-      customPath,
-      join(process.cwd(), 'resources', 'bin', 'ffmpeg'),
-      join(app?.getAppPath ? app.getAppPath() : '', 'resources', 'bin', 'ffmpeg'),
-      '/home/dvs-chienpd/ThreadCut/resources/bin/ffmpeg',
-      'ffmpeg'
-    ]
-    for (const p of candidates) {
-      if (p && existsSync(p)) return p
+    const isWin = process.platform === 'win32'
+    const exeName = isWin ? 'ffmpeg.exe' : 'ffmpeg'
+
+    if (customPath && existsSync(customPath)) {
+      return customPath
     }
-    return 'ffmpeg'
+
+    // Trong ứng dụng đóng gói, binary được unpack ra process.resourcesPath
+    const resourcesDir = process.resourcesPath || ''
+    const unpackedBin = join(resourcesDir, 'app.asar.unpacked', 'resources', 'bin', exeName)
+    const directBin = join(resourcesDir, 'resources', 'bin', exeName)
+    const devBin = join(process.cwd(), 'resources', 'bin', exeName)
+
+    if (existsSync(unpackedBin)) return unpackedBin
+    if (existsSync(directBin)) return directBin
+    if (existsSync(devBin)) return devBin
+
+    // Các đường dẫn phổ biến trên Windows
+    if (isWin) {
+      const winFallbacks = [
+        'C:\\ffmpeg\\bin\\ffmpeg.exe',
+        'C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe',
+        join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Links', 'ffmpeg.exe'),
+        join(process.env.USERPROFILE || '', 'scoop', 'shims', 'ffmpeg.exe'),
+        join(process.env.ProgramData || '', 'chocolatey', 'bin', 'ffmpeg.exe')
+      ]
+      for (const p of winFallbacks) {
+        if (p && existsSync(p)) return p
+      }
+    }
+
+    // Mặc định gọi lệnh hệ thống trong PATH
+    return isWin ? 'ffmpeg.exe' : 'ffmpeg'
   }
 
   private resolveFfprobeBinary(): string {
-    const candidates = [
-      join(process.cwd(), 'resources', 'bin', 'ffprobe'),
-      join(app?.getAppPath ? app.getAppPath() : '', 'resources', 'bin', 'ffprobe'),
-      '/home/dvs-chienpd/ThreadCut/resources/bin/ffprobe',
-      'ffprobe'
-    ]
-    for (const p of candidates) {
-      if (p && existsSync(p)) return p
+    const isWin = process.platform === 'win32'
+    const exeName = isWin ? 'ffprobe.exe' : 'ffprobe'
+
+    const resourcesDir = process.resourcesPath || ''
+    const unpackedBin = join(resourcesDir, 'app.asar.unpacked', 'resources', 'bin', exeName)
+    const directBin = join(resourcesDir, 'resources', 'bin', exeName)
+    const devBin = join(process.cwd(), 'resources', 'bin', exeName)
+
+    if (existsSync(unpackedBin)) return unpackedBin
+    if (existsSync(directBin)) return directBin
+    if (existsSync(devBin)) return devBin
+
+    if (isWin) {
+      const winFallbacks = [
+        'C:\\ffmpeg\\bin\\ffprobe.exe',
+        'C:\\Program Files\\ffmpeg\\bin\\ffprobe.exe',
+        join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Links', 'ffprobe.exe'),
+        join(process.env.USERPROFILE || '', 'scoop', 'shims', 'ffprobe.exe'),
+        join(process.env.ProgramData || '', 'chocolatey', 'bin', 'ffprobe.exe')
+      ]
+      for (const p of winFallbacks) {
+        if (p && existsSync(p)) return p
+      }
     }
-    return 'ffprobe'
+
+    return isWin ? 'ffprobe.exe' : 'ffprobe'
   }
 
   async getAudioDuration(audioPath: string): Promise<number> {
@@ -188,6 +225,20 @@ export class VideoRendererService {
       }
     })
 
+    // Input video của bài viết gốc (nếu bài viết có video đính kèm)
+    const postSegment = segmentTimings[0]?.segment
+    const hasPostVideo = Boolean(
+      postSegment?.mediaVideoPath && existsSync(postSegment.mediaVideoPath)
+    )
+    let postVideoInputIdx = -1
+    if (hasPostVideo) {
+      postVideoInputIdx = cardIndexStart + segmentTimings.length
+      ffmpegArgs.push('-stream_loop', '-1', '-i', postSegment!.mediaVideoPath!)
+      console.log(
+        `[VideoRenderer] Đã thêm input video của bài viết gốc vào FFmpeg: ${postSegment!.mediaVideoPath}`
+      )
+    }
+
     // Xây dựng chuỗi filter
     let currentVideoLabel = 'v0'
     const filterParts: string[] = []
@@ -201,19 +252,38 @@ export class VideoRendererService {
       filterParts.push(`[0:v]setsar=1[${currentVideoLabel}]`)
     }
 
-    // Ghép các thẻ Card lên video
+    // Ghép các thẻ Card và Video bài viết lên video
     segmentTimings.forEach((st, idx) => {
       const inputIdx = cardIndexStart + idx
       const nextLabel = `v_card_${idx}`
-      // Đặt Card ở phía trên giữa màn hình ((W-w)/2, 380px)
-      // Thẻ Card cuối cùng giữ hiển thị tới hết video (totalDuration)
       const isLast = idx === segmentTimings.length - 1
       const cardEndSec = isLast ? totalDuration : st.endSec
       const enableClause = `between(t,${st.startSec.toFixed(2)},${cardEndSec.toFixed(2)})`
-      filterParts.push(
-        `[${currentVideoLabel}][${inputIdx}:v]overlay=(W-w)/2:380:enable='${enableClause}'[${nextLabel}]`
-      )
-      currentVideoLabel = nextLabel
+
+      if (idx === 0 && hasPostVideo) {
+        // Bài viết có video: Đặt Card ở y = 140
+        filterParts.push(
+          `[${currentVideoLabel}][${inputIdx}:v]overlay=(W-w)/2:140:enable='${enableClause}'[${nextLabel}]`
+        )
+        currentVideoLabel = nextLabel
+
+        // Ghép video của bài viết ở ngay dưới Card (y = 510)
+        const postVidLabel = 'v_post_vid'
+        const vidEnable = `between(t,0,${st.endSec.toFixed(2)})`
+        filterParts.push(
+          `[${postVideoInputIdx}:v]scale=900:680:force_original_aspect_ratio=decrease,setsar=1,format=yuva420p[${postVidLabel}_scaled]`
+        )
+        filterParts.push(
+          `[${currentVideoLabel}][${postVidLabel}_scaled]overlay=(W-w)/2:510:enable='${vidEnable}'[${postVidLabel}]`
+        )
+        currentVideoLabel = postVidLabel
+      } else {
+        // Card bình thường: Đặt ở giữa màn hình (y = 380)
+        filterParts.push(
+          `[${currentVideoLabel}][${inputIdx}:v]overlay=(W-w)/2:380:enable='${enableClause}'[${nextLabel}]`
+        )
+        currentVideoLabel = nextLabel
+      }
     })
 
     // Áp dụng phụ đề karaoke ASS lên trên cùng

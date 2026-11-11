@@ -34,6 +34,7 @@ const api = {
   // File dialogs & Shell
   selectDirectory: (): Promise<string | null> => ipcRenderer.invoke('dialog:select-directory'),
   selectVideo: (): Promise<string | null> => ipcRenderer.invoke('dialog:select-video'),
+  selectFfmpeg: (): Promise<string | null> => ipcRenderer.invoke('dialog:select-ffmpeg'),
   openPath: (targetPath: string): Promise<boolean> =>
     ipcRenderer.invoke('shell:open-path', targetPath),
   listPresetBackgrounds: (): Promise<Array<{ id: string; name: string; path: string }>> =>

@@ -148,6 +148,13 @@ function App(): React.JSX.Element {
     }
   }
 
+  const handleSelectCustomFfmpeg = async (): Promise<void> => {
+    const f = await window.api.selectFfmpeg()
+    if (f) {
+      setSettings((prev) => ({ ...prev, customFfmpegPath: f }))
+    }
+  }
+
   const handleSelectBgVideo = async (): Promise<void> => {
     const v = await window.api.selectVideo()
     if (v) {
@@ -425,6 +432,45 @@ function App(): React.JSX.Element {
                   resize: 'vertical'
                 }}
               />
+
+              {/* Khung xem trước Video của bài viết (nếu bài viết có video) */}
+              {Boolean(postData.localVideoPath || postData.videoUrl) && (
+                <div
+                  style={{
+                    marginTop: '10px',
+                    borderRadius: '8px',
+                    overflow: 'hidden',
+                    border: '1px solid #374151',
+                    background: '#030712'
+                  }}
+                >
+                  <video
+                    src={
+                      postData.localVideoPath
+                        ? postData.localVideoPath.startsWith('atom://')
+                          ? postData.localVideoPath
+                          : `atom://${postData.localVideoPath.replace(/^file:\/\//, '')}`
+                        : postData.videoUrl
+                    }
+                    controls
+                    muted
+                    style={{ width: '100%', maxHeight: '180px', display: 'block', objectFit: 'contain' }}
+                  />
+                  <div
+                    style={{
+                      padding: '6px 10px',
+                      background: '#0f172a',
+                      fontSize: '11px',
+                      color: '#38bdf8',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    <span>🎬 Bài viết có video đính kèm (sẽ tự động phát trên khung bài viết trong video 9:16)</span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -967,8 +1013,9 @@ function App(): React.JSX.Element {
                     border: '1px solid #282828',
                     borderRadius: '14px',
                     padding: '12px',
-                    marginTop: '40px',
-                    boxShadow: '0 10px 25px rgba(0,0,0,0.7)'
+                    marginTop: Boolean(postData?.localVideoPath || postData?.videoUrl) ? '16px' : '40px',
+                    boxShadow: '0 10px 25px rgba(0,0,0,0.7)',
+                    transition: 'all 0.3s'
                   }}
                 >
                   <div
@@ -1006,7 +1053,7 @@ function App(): React.JSX.Element {
                       fontSize: '11px',
                       color: '#f3f5f7',
                       lineHeight: 1.4,
-                      maxHeight: '60px',
+                      maxHeight: Boolean(postData?.localVideoPath || postData?.videoUrl) ? '40px' : '60px',
                       overflow: 'hidden'
                     }}
                   >
@@ -1015,6 +1062,38 @@ function App(): React.JSX.Element {
                       : 'Nội dung bài viết Threads và 5 bình luận peak sẽ tự động hiển thị tại đây...'}
                   </div>
                 </div>
+
+                {/* Video bài viết gốc hiển thị trong mockup (nếu có) */}
+                {Boolean(postData?.localVideoPath || postData?.videoUrl) && (
+                  <div
+                    style={{
+                      position: 'relative',
+                      zIndex: 1,
+                      marginTop: '8px',
+                      borderRadius: '10px',
+                      overflow: 'hidden',
+                      border: '1px solid #374151',
+                      background: '#000',
+                      boxShadow: '0 10px 20px rgba(0,0,0,0.6)'
+                    }}
+                  >
+                    <video
+                      key={postData?.localVideoPath || postData?.videoUrl}
+                      src={
+                        postData?.localVideoPath
+                          ? postData.localVideoPath.startsWith('atom://')
+                            ? postData.localVideoPath
+                            : `atom://${postData.localVideoPath.replace(/^file:\/\//, '')}`
+                          : postData?.videoUrl
+                      }
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      style={{ width: '100%', maxHeight: '130px', objectFit: 'contain', display: 'block' }}
+                    />
+                  </div>
+                )}
 
                 {/* Bottom: Karaoke jumping text simulation */}
                 <div
@@ -1202,6 +1281,55 @@ function App(): React.JSX.Element {
                   >
                     Chọn
                   </button>
+                </div>
+              </div>
+
+              <div>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    color: '#e2e8f0',
+                    marginBottom: '6px'
+                  }}
+                >
+                  Đường dẫn FFmpeg (Tự động nhận diện nếu để trống):
+                </label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="text"
+                    placeholder="Mặc định tự động nhận diện từ hệ thống (ffmpeg.exe)..."
+                    value={settings.customFfmpegPath || ''}
+                    onChange={(e) => setSettings({ ...settings, customFfmpegPath: e.target.value })}
+                    style={{
+                      flex: 1,
+                      padding: '10px',
+                      borderRadius: '8px',
+                      border: '1px solid #374151',
+                      background: '#030712',
+                      color: settings.customFfmpegPath ? '#38bdf8' : '#9ca3af',
+                      fontSize: '13px'
+                    }}
+                  />
+                  <button
+                    onClick={handleSelectCustomFfmpeg}
+                    style={{
+                      background: '#1f2937',
+                      color: '#fff',
+                      border: '1px solid #374151',
+                      padding: '0 14px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    Chọn file
+                  </button>
+                </div>
+                <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>
+                  Nếu máy Windows chưa cài FFmpeg, bạn có thể tải file ffmpeg.exe về và chọn vào ô này.
                 </div>
               </div>
 

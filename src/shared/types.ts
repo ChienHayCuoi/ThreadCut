@@ -22,6 +22,8 @@ export interface ThreadPostDetail {
   author: ThreadAuthor
   text: string
   mediaUrls?: string[]
+  videoUrl?: string
+  localVideoPath?: string
   likesCount?: number
   commentsCount?: number
   timestamp?: number
@@ -43,6 +45,7 @@ export interface TtsSegment {
   durationSec: number
   subtitles: TtsWordTimestamp[]
   cardImagePath?: string
+  mediaVideoPath?: string
 }
 
 export type BackgroundMode = 'generator' | 'preset' | 'custom'

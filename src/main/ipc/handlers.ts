@@ -7,12 +7,19 @@ import { TtsService } from '../modules/tts/tts.service'
 import { CardRendererService } from '../modules/card/card.service'
 import { VideoRendererService } from '../modules/video/video.service'
 import { SettingsService } from '../modules/settings/settings.service'
-import { FullPipelineParams, VideoJobProgress, ThreadComment } from '../../shared/types'
+import { AppUpdaterService } from '../modules/updater/updater.service'
+import {
+  FullPipelineParams,
+  VideoJobProgress,
+  ThreadComment,
+  UpdateInfoState
+} from '../../shared/types'
 
 const settingsService = new SettingsService()
 const crawler = new ThreadsCrawler()
 const tts = new TtsService()
 const cardRenderer = new CardRendererService()
+const updaterService = new AppUpdaterService()
 
 export function registerIpcHandlers(): void {
   // 0. Quản lý cấu hình Settings
@@ -299,5 +306,31 @@ export function registerIpcHandlers(): void {
     }
     shell.openPath(dir)
     return true
+  })
+
+  // 6. Quản lý Auto-Update tự động trong ứng dụng
+  ipcMain.handle('updater:check', async (): Promise<UpdateInfoState> => {
+    return await updaterService.checkForUpdates()
+  })
+
+  ipcMain.handle('updater:download', async (): Promise<void> => {
+    await updaterService.downloadUpdate()
+  })
+
+  ipcMain.handle('updater:install', async (): Promise<void> => {
+    updaterService.quitAndInstall()
+  })
+
+  ipcMain.handle('updater:get-state', async (): Promise<UpdateInfoState> => {
+    return updaterService.getState()
+  })
+
+  // Mở liên kết ngoài trình duyệt hệ thống (nếu cần)
+  ipcMain.handle('app:open-external', async (_event, targetUrl: string) => {
+    if (targetUrl && (targetUrl.startsWith('http://') || targetUrl.startsWith('https://'))) {
+      await shell.openExternal(targetUrl)
+      return true
+    }
+    return false
   })
 }

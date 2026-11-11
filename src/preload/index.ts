@@ -5,7 +5,8 @@ import {
   ThreadComment,
   AppSettings,
   FullPipelineParams,
-  VideoJobProgress
+  VideoJobProgress,
+  UpdateInfoState
 } from '../shared/types'
 
 // Custom APIs for ThreadCut renderer
@@ -37,6 +38,23 @@ const api = {
   selectFfmpeg: (): Promise<string | null> => ipcRenderer.invoke('dialog:select-ffmpeg'),
   openPath: (targetPath: string): Promise<boolean> =>
     ipcRenderer.invoke('shell:open-path', targetPath),
+  openExternal: (targetUrl: string): Promise<boolean> =>
+    ipcRenderer.invoke('app:open-external', targetUrl),
+
+  // In-App Auto-Update APIs
+  checkForUpdates: (): Promise<UpdateInfoState> => ipcRenderer.invoke('updater:check'),
+  downloadUpdate: (): Promise<void> => ipcRenderer.invoke('updater:download'),
+  installUpdate: (): Promise<void> => ipcRenderer.invoke('updater:install'),
+  onUpdaterStatus: (callback: (status: UpdateInfoState) => void): (() => void) => {
+    const sub = (_e: Electron.IpcRendererEvent, status: UpdateInfoState): void => {
+      callback(status)
+    }
+    ipcRenderer.on('updater:status', sub)
+    return () => {
+      ipcRenderer.removeListener('updater:status', sub)
+    }
+  },
+
   listPresetBackgrounds: (): Promise<Array<{ id: string; name: string; path: string }>> =>
     ipcRenderer.invoke('template:list-presets'),
   openTemplatesFolder: (): Promise<boolean> => ipcRenderer.invoke('shell:open-templates-folder'),

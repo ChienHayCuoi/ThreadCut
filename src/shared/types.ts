@@ -99,3 +99,29 @@ export interface FullPipelineParams {
   rate?: string
   template: VideoTemplateConfig
 }
+
+export interface UpdateProgress {
+  percent: number
+  bytesPerSecond: number
+  transferred: number
+  total: number
+}
+
+export interface UpdateInfoState {
+  status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
+  currentVersion: string
+  latestVersion?: string
+  releaseNotes?: string
+  progress?: UpdateProgress
+  error?: string
+}
+
+export interface UpdateCheckResult {
+  hasUpdate: boolean
+  currentVersion: string
+  latestVersion: string
+  releaseNotes?: string
+  downloadUrl?: string
+  publishedAt?: string
+  error?: string
+}

@@ -1,5 +1,11 @@
 import { useState, useEffect } from 'react'
-import { ThreadComment, ThreadPostDetail, AppSettings, VideoJobProgress } from '../../shared/types'
+import {
+  ThreadComment,
+  ThreadPostDetail,
+  AppSettings,
+  VideoJobProgress,
+  UpdateInfoState
+} from '../../shared/types'
 
 const formatLikes = (count?: number): string => {
   if (count === undefined || count === null) return '0'
@@ -37,12 +43,41 @@ function App(): React.JSX.Element {
   const [backgroundVideoPath, setBackgroundVideoPath] = useState<string>('')
   const [previewTab, setPreviewTab] = useState<'layout' | 'rendered'>('layout')
 
-  // Load settings & attach progress listener on mount
+  // Quản lý In-App Auto Update
+  const [updateState, setUpdateState] = useState<UpdateInfoState | null>(null)
+  const [showUpdateBanner, setShowUpdateBanner] = useState<boolean>(true)
+  const [checkingUpdate, setCheckingUpdate] = useState<boolean>(false)
+  const [updateCheckMsg, setUpdateCheckMsg] = useState<string>('')
+
+  // Load settings, attach progress listener & lắng nghe auto-update
   useEffect(() => {
     window.api.getSettings().then((s) => {
       setSettings(s)
       if (s.defaultTtsVoice) setSelectedVoice(s.defaultTtsVoice)
     })
+
+    // Lắng nghe trạng thái cập nhật thời gian thực
+    const unsubUpdater = window.api.onUpdaterStatus((status) => {
+      setUpdateState(status)
+      if (
+        status.status === 'available' ||
+        status.status === 'downloading' ||
+        status.status === 'downloaded'
+      ) {
+        setShowUpdateBanner(true)
+      }
+    })
+
+    // Tự động kiểm tra cập nhật khi mở app
+    window.api
+      .checkForUpdates()
+      .then((res) => {
+        setUpdateState(res)
+        if (res.status === 'available') {
+          setShowUpdateBanner(true)
+        }
+      })
+      .catch((err) => console.warn('Lỗi kiểm tra cập nhật:', err))
 
     const unsubscribe = window.api.onProgress((p) => {
       setProgress(p)
@@ -53,8 +88,42 @@ function App(): React.JSX.Element {
 
     return () => {
       unsubscribe()
+      unsubUpdater()
     }
   }, [])
+
+  const handleManualCheckUpdate = async (): Promise<void> => {
+    setCheckingUpdate(true)
+    setUpdateCheckMsg('')
+    try {
+      const res = await window.api.checkForUpdates()
+      setUpdateState(res)
+      if (res.status === 'available') {
+        setUpdateCheckMsg(`🎉 Đã có bản cập nhật mới: v${res.latestVersion}!`)
+        setShowUpdateBanner(true)
+      } else if (res.status === 'not-available') {
+        setUpdateCheckMsg(`✅ Bạn đang sử dụng phiên bản mới nhất (v${res.currentVersion}).`)
+      } else if (res.status === 'error') {
+        setUpdateCheckMsg(`⚠️ ${res.error || 'Lỗi kiểm tra cập nhật'}`)
+      }
+    } catch {
+      setUpdateCheckMsg('❌ Không thể kết nối tới máy chủ để kiểm tra cập nhật.')
+    } finally {
+      setCheckingUpdate(false)
+    }
+  }
+
+  const handleDownloadUpdate = async (): Promise<void> => {
+    try {
+      await window.api.downloadUpdate()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleInstallUpdate = (): void => {
+    window.api.installUpdate()
+  }
 
   const handleSaveSettings = async (): Promise<void> => {
     const updated = await window.api.saveSettings(settings)
@@ -274,6 +343,144 @@ function App(): React.JSX.Element {
           </button>
         </div>
       </header>
+
+      {/* In-App Auto Update Notification Banner */}
+      {updateState &&
+        (updateState.status === 'available' ||
+          updateState.status === 'downloading' ||
+          updateState.status === 'downloaded') &&
+        showUpdateBanner && (
+          <div
+            style={{
+              background: 'linear-gradient(90deg, #1e3a8a, #2563eb)',
+              border: '1px solid #60a5fa',
+              borderRadius: '10px',
+              padding: '12px 18px',
+              marginTop: '12px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
+              boxShadow: '0 4px 14px rgba(37,99,235,0.25)',
+              flexShrink: 0
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '20px' }}>
+                  {updateState.status === 'downloaded'
+                    ? '🎉'
+                    : updateState.status === 'downloading'
+                      ? '⏳'
+                      : '🚀'}
+                </span>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '13px', color: '#fff' }}>
+                    {updateState.status === 'downloaded'
+                      ? `Bản cập nhật v${updateState.latestVersion} đã tải xong!`
+                      : updateState.status === 'downloading'
+                        ? `Đang tải bản cập nhật v${updateState.latestVersion}... (${updateState.progress?.percent || 0}%)`
+                        : `Đã có phiên bản mới: v${updateState.latestVersion}!`}
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#bfdbfe' }}>
+                    {updateState.status === 'downloaded'
+                      ? 'Bấm nút bên phải để khởi động lại và tự động nâng cấp ứng dụng ngay.'
+                      : updateState.status === 'downloading'
+                        ? 'Đang tải file cập nhật ngầm, bạn vẫn có thể sử dụng ứng dụng bình thường.'
+                        : `Phiên bản hiện tại: v${updateState.currentVersion}. Cập nhật trực tiếp không cần mở web.`}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                {updateState.status === 'available' && (
+                  <button
+                    type="button"
+                    onClick={handleDownloadUpdate}
+                    style={{
+                      background: '#ffffff',
+                      color: '#1d4ed8',
+                      border: 'none',
+                      padding: '7px 16px',
+                      borderRadius: '6px',
+                      fontWeight: 700,
+                      fontSize: '12px',
+                      cursor: 'pointer',
+                      boxShadow: '0 2px 5px rgba(0,0,0,0.2)'
+                    }}
+                  >
+                    Cập nhật ngay 🚀
+                  </button>
+                )}
+
+                {updateState.status === 'downloaded' && (
+                  <button
+                    type="button"
+                    onClick={handleInstallUpdate}
+                    style={{
+                      background: '#22c55e',
+                      color: '#ffffff',
+                      border: 'none',
+                      padding: '7px 16px',
+                      borderRadius: '6px',
+                      fontWeight: 700,
+                      fontSize: '12px',
+                      cursor: 'pointer',
+                      boxShadow: '0 2px 5px rgba(0,0,0,0.2)'
+                    }}
+                  >
+                    Khởi động lại để cập nhật 🔄
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setShowUpdateBanner(false)}
+                  title="Ẩn thông báo"
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#bfdbfe',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    padding: '4px 6px',
+                    lineHeight: 1
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Thanh tiến trình khi đang download */}
+            {updateState.status === 'downloading' && (
+              <div
+                style={{
+                  width: '100%',
+                  height: '6px',
+                  background: 'rgba(0,0,0,0.3)',
+                  borderRadius: '3px',
+                  overflow: 'hidden',
+                  marginTop: '4px'
+                }}
+              >
+                <div
+                  style={{
+                    height: '100%',
+                    width: `${updateState.progress?.percent || 0}%`,
+                    background: '#38bdf8',
+                    transition: 'width 0.2s ease'
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        )}
 
       {/* Main Grid: 2 Columns */}
       <div style={{ display: 'flex', flex: 1, gap: '20px', marginTop: '16px', minHeight: 0 }}>
@@ -1331,6 +1538,177 @@ function App(): React.JSX.Element {
                 <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>
                   Nếu máy Windows chưa cài FFmpeg, bạn có thể tải file ffmpeg.exe về và chọn vào ô này.
                 </div>
+              </div>
+
+              {/* Phần kiểm tra phiên bản cập nhật tự động */}
+              <div
+                style={{
+                  borderTop: '1px solid #1f2937',
+                  paddingTop: '14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px'
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: '#e2e8f0' }}>
+                      Phiên bản ứng dụng: v{updateState?.currentVersion || '1.0.0'}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
+                      Cập nhật ứng dụng tự động trực tiếp trong app
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleManualCheckUpdate}
+                    disabled={checkingUpdate || updateState?.status === 'downloading'}
+                    style={{
+                      background: '#1f2937',
+                      color: '#38bdf8',
+                      border: '1px solid #38bdf8',
+                      padding: '8px 14px',
+                      borderRadius: '8px',
+                      cursor:
+                        checkingUpdate || updateState?.status === 'downloading'
+                          ? 'not-allowed'
+                          : 'pointer',
+                      fontWeight: 600,
+                      fontSize: '12px'
+                    }}
+                  >
+                    {checkingUpdate
+                      ? 'Đang kiểm tra...'
+                      : updateState?.status === 'downloading'
+                        ? 'Đang tải...'
+                        : '🔄 Kiểm tra cập nhật'}
+                  </button>
+                </div>
+
+                {/* Kết quả kiểm tra thủ công */}
+                {updateCheckMsg && (
+                  <div
+                    style={{
+                      fontSize: '12px',
+                      padding: '8px 12px',
+                      borderRadius: '8px',
+                      background:
+                        updateState?.status === 'available'
+                          ? '#1e3a8a'
+                          : updateState?.status === 'error'
+                            ? '#7f1d1d'
+                            : '#064e3b',
+                      color: '#fff',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between'
+                    }}
+                  >
+                    <span>{updateCheckMsg}</span>
+                    {updateState?.status === 'available' && (
+                      <button
+                        type="button"
+                        onClick={handleDownloadUpdate}
+                        style={{
+                          background: '#fff',
+                          color: '#1d4ed8',
+                          border: 'none',
+                          padding: '4px 12px',
+                          borderRadius: '4px',
+                          fontWeight: 700,
+                          fontSize: '11px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Cập nhật ngay
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Trạng thái tải bản cập nhật trong Settings */}
+                {updateState?.status === 'downloading' && (
+                  <div
+                    style={{
+                      padding: '10px 12px',
+                      background: '#1e293b',
+                      borderRadius: '8px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '6px'
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        fontSize: '12px',
+                        color: '#93c5fd'
+                      }}
+                    >
+                      <span>Đang tải bản cập nhật v{updateState.latestVersion}...</span>
+                      <span style={{ fontWeight: 700 }}>{updateState.progress?.percent || 0}%</span>
+                    </div>
+                    <div
+                      style={{
+                        width: '100%',
+                        height: '6px',
+                        background: '#0f172a',
+                        borderRadius: '3px',
+                        overflow: 'hidden'
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: '100%',
+                          width: `${updateState.progress?.percent || 0}%`,
+                          background: '#38bdf8',
+                          transition: 'width 0.2s ease'
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Trạng thái đã tải xong trong Settings */}
+                {updateState?.status === 'downloaded' && (
+                  <div
+                    style={{
+                      padding: '10px 12px',
+                      background: '#064e3b',
+                      borderRadius: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between'
+                    }}
+                  >
+                    <span style={{ fontSize: '12px', color: '#fff', fontWeight: 600 }}>
+                      🎉 Bản cập nhật v{updateState.latestVersion} đã sẵn sàng!
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleInstallUpdate}
+                      style={{
+                        background: '#22c55e',
+                        color: '#fff',
+                        border: 'none',
+                        padding: '6px 14px',
+                        borderRadius: '6px',
+                        fontWeight: 700,
+                        fontSize: '12px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Khởi động lại ngay 🔄
+                    </button>
+                  </div>
+                )}
               </div>
 
               {settingsSavedMsg && (

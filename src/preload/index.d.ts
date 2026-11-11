@@ -4,7 +4,8 @@ import {
   ThreadComment,
   AppSettings,
   FullPipelineParams,
-  VideoJobProgress
+  VideoJobProgress,
+  UpdateInfoState
 } from '../shared/types'
 
 interface ThreadCutAPI {
@@ -28,6 +29,11 @@ interface ThreadCutAPI {
   selectVideo: () => Promise<string | null>
   selectFfmpeg: () => Promise<string | null>
   openPath: (targetPath: string) => Promise<boolean>
+  openExternal: (targetUrl: string) => Promise<boolean>
+  checkForUpdates: () => Promise<UpdateInfoState>
+  downloadUpdate: () => Promise<void>
+  installUpdate: () => Promise<void>
+  onUpdaterStatus: (callback: (status: UpdateInfoState) => void) => () => void
   listPresetBackgrounds: () => Promise<Array<{ id: string; name: string; path: string }>>
   openTemplatesFolder: () => Promise<boolean>
   onProgress: (callback: (progress: VideoJobProgress) => void) => () => void

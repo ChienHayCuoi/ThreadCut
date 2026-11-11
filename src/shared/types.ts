@@ -49,4 +49,3 @@ export interface AppSettings {
   defaultTtsVoice: string
   backgroundTemplateDir: string
 }
-

@@ -8,8 +8,7 @@ const api = {
     ipcRenderer.invoke('ai:filter-comments', params),
   generateTts: (params: { text: string; voice?: string }) =>
     ipcRenderer.invoke('tts:generate', params),
-  renderVideo: (params: { templateConfig: unknown }) =>
-    ipcRenderer.invoke('video:render', params)
+  renderVideo: (params: { templateConfig: unknown }) =>ipcRenderer.invoke('video:render', params)
 }
 
 if (process.contextIsolated) {

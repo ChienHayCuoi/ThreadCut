@@ -1,11 +1,11 @@
 {
-  "name": "threadcut",
-  "version": "1.0.2",
+  "name": "DunChin",
+  "version": "1.0.3",
   "description": "DunChin rảnh rỗi nên tự vide con app cho zui",
   "license": "MIT",
   "main": "./out/main/index.js",
-  "author": "example.com",
-  "homepage": "https://electron-vite.org",
+  "author": "iampdc2003@gmail.com",
+  "homepage": "https://www.facebook.com/DuyChien1409?locale=vi_VN",
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",

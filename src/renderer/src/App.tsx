@@ -14,6 +14,26 @@ const formatLikes = (count?: number): string => {
   return count.toLocaleString()
 }
 
+/**
+ * Chuyển đổi đường dẫn file local sang atom:// protocol an toàn cho cả Windows và macOS/Linux
+ */
+const toMediaUrl = (pathOrUrl?: string | null): string => {
+  if (!pathOrUrl) return ''
+  if (
+    pathOrUrl.startsWith('http://') ||
+    pathOrUrl.startsWith('https://') ||
+    pathOrUrl.startsWith('blob:') ||
+    pathOrUrl.startsWith('data:')
+  ) {
+    return pathOrUrl
+  }
+  if (pathOrUrl.startsWith('atom://media/?path=')) {
+    return pathOrUrl
+  }
+  const cleanPath = pathOrUrl.replace(/^file:\/\//, '')
+  return `atom://media/?path=${encodeURIComponent(cleanPath)}`
+}
+
 function App(): React.JSX.Element {
   const [settings, setSettings] = useState<AppSettings>({
     geminiApiKey: '',
@@ -652,13 +672,7 @@ function App(): React.JSX.Element {
                   }}
                 >
                   <video
-                    src={
-                      postData.localVideoPath
-                        ? postData.localVideoPath.startsWith('atom://')
-                          ? postData.localVideoPath
-                          : `atom://${postData.localVideoPath.replace(/^file:\/\//, '')}`
-                        : postData.videoUrl
-                    }
+                    src={toMediaUrl(postData.localVideoPath) || postData.videoUrl}
                     controls
                     muted
                     style={{ width: '100%', maxHeight: '180px', display: 'block', objectFit: 'contain' }}
@@ -1152,11 +1166,7 @@ function App(): React.JSX.Element {
             {previewTab === 'rendered' && lastOutputVideo ? (
               <video
                 key={lastOutputVideo}
-                src={
-                  lastOutputVideo.startsWith('atom://')
-                    ? lastOutputVideo
-                    : `atom://${lastOutputVideo.replace(/^file:\/\//, '')}`
-                }
+                src={toMediaUrl(lastOutputVideo)}
                 controls
                 autoPlay
                 playsInline
@@ -1168,11 +1178,7 @@ function App(): React.JSX.Element {
                 {backgroundVideoPath ? (
                   <video
                     key={backgroundVideoPath}
-                    src={
-                      backgroundVideoPath.startsWith('atom://')
-                        ? backgroundVideoPath
-                        : `atom://${backgroundVideoPath.replace(/^file:\/\//, '')}`
-                    }
+                    src={toMediaUrl(backgroundVideoPath)}
                     autoPlay
                     loop
                     muted
@@ -1286,13 +1292,7 @@ function App(): React.JSX.Element {
                   >
                     <video
                       key={postData?.localVideoPath || postData?.videoUrl}
-                      src={
-                        postData?.localVideoPath
-                          ? postData.localVideoPath.startsWith('atom://')
-                            ? postData.localVideoPath
-                            : `atom://${postData.localVideoPath.replace(/^file:\/\//, '')}`
-                          : postData?.videoUrl
-                      }
+                      src={toMediaUrl(postData?.localVideoPath) || postData?.videoUrl}
                       autoPlay
                       loop
                       muted

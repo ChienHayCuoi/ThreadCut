@@ -61,13 +61,24 @@ function createWindow(): void {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
-  // Đăng ký protocol stream video local
+  // Đăng ký protocol stream video local (hỗ trợ an toàn cả Windows và Linux/macOS)
   protocol.handle('atom', (request) => {
-    let filePath = decodeURIComponent(request.url.replace(/^atom:\/\//, ''))
-    if (!filePath.startsWith('/')) {
-      filePath = '/' + filePath
+    try {
+      const parsed = new URL(request.url)
+      let targetPath = parsed.searchParams.get('path')
+      if (!targetPath) {
+        // Fallback tương thích ngược định dạng cũ atom:// hoặc atom:///
+        let raw = decodeURIComponent(request.url.replace(/^atom:\/\//, ''))
+        if (/^\/[a-zA-Z]:[/\\]/.test(raw)) {
+          raw = raw.slice(1)
+        }
+        targetPath = raw
+      }
+      return net.fetch(pathToFileURL(targetPath).toString())
+    } catch (err) {
+      console.error('[Protocol atom] Lỗi phân giải URL video:', request.url, err)
+      return new Response('Not Found', { status: 404 })
     }
-    return net.fetch(pathToFileURL(filePath).toString())
   })
 
   // Set app user model id for windows

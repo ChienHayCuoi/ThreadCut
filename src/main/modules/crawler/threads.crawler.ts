@@ -126,6 +126,7 @@ export class ThreadsCrawler {
 
             let videoUrl = '';
             const videoEl = art.querySelector('video');
+            const hasVideo = Boolean(videoEl);
             if (videoEl) {
               videoUrl = videoEl.currentSrc || videoEl.src || '';
               if (!videoUrl) {
@@ -138,11 +139,12 @@ export class ThreadsCrawler {
               text: art.innerText || '',
               avatar: img ? img.src : '',
               domUser,
+              hasVideo,
               videoUrl
             };
           });
         })()
-      `)) as Array<{ text: string; avatar: string; domUser: string; videoUrl?: string }>
+      `)) as Array<{ text: string; avatar: string; domUser: string; hasVideo: boolean; videoUrl?: string }>
 
       if (Array.isArray(rawArticles) && rawArticles.length > 0) {
         // Trích xuất username từ URL: threads.net/@username/post/...
@@ -156,8 +158,11 @@ export class ThreadsCrawler {
         const mainAvatar = rawArticles[0].avatar || ''
         const mainLikes = first.likesCount
 
-        // 1.1 Tìm URL video của bài viết gốc
-        const mainVideoUrl = rawArticles[0].videoUrl || detectedVideoUrls[0] || undefined
+        // 1.1 Tìm URL video của bài viết gốc (chỉ nhận khi chính bài viết có thẻ video)
+        let mainVideoUrl: string | undefined = undefined
+        if (rawArticles[0].hasVideo) {
+          mainVideoUrl = rawArticles[0].videoUrl || detectedVideoUrls[0] || undefined
+        }
         let localVideoPath: string | undefined = undefined
 
         if (mainVideoUrl) {

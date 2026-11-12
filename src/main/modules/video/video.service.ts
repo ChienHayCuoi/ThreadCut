@@ -1,5 +1,5 @@
-import { join } from 'path'
-import { existsSync, writeFileSync, mkdirSync } from 'fs'
+import { join, dirname } from 'path'
+import { existsSync, writeFileSync, mkdirSync, statSync } from 'fs'
 import { spawn } from 'child_process'
 import { VideoTemplateConfig, VideoJobProgress, TtsSegment } from '../../../shared/types'
 
@@ -11,11 +11,23 @@ export class VideoRendererService {
     console.log(`[VideoRenderer] Khởi tạo với FFmpeg binary: ${this.ffmpegPath}`)
   }
 
+  private isValidExecutable(filePath?: string): boolean {
+    if (!filePath) return false
+    try {
+      if (!existsSync(filePath)) return false
+      const stat = statSync(filePath)
+      // File nhị phân hợp lệ phải có dung lượng tối thiểu (> 1MB), tránh trường hợp file rỗng 0 byte
+      return stat.isFile() && stat.size > 1024 * 1024
+    } catch {
+      return false
+    }
+  }
+
   private resolveFfmpegBinary(customPath?: string): string {
     const isWin = process.platform === 'win32'
     const exeName = isWin ? 'ffmpeg.exe' : 'ffmpeg'
 
-    if (customPath && existsSync(customPath)) {
+    if (customPath && this.isValidExecutable(customPath)) {
       return customPath
     }
 
@@ -25,9 +37,9 @@ export class VideoRendererService {
     const directBin = join(resourcesDir, 'resources', 'bin', exeName)
     const devBin = join(process.cwd(), 'resources', 'bin', exeName)
 
-    if (existsSync(unpackedBin)) return unpackedBin
-    if (existsSync(directBin)) return directBin
-    if (existsSync(devBin)) return devBin
+    if (this.isValidExecutable(unpackedBin)) return unpackedBin
+    if (this.isValidExecutable(directBin)) return directBin
+    if (this.isValidExecutable(devBin)) return devBin
 
     // Các đường dẫn phổ biến trên Windows
     if (isWin) {
@@ -39,7 +51,7 @@ export class VideoRendererService {
         join(process.env.ProgramData || '', 'chocolatey', 'bin', 'ffmpeg.exe')
       ]
       for (const p of winFallbacks) {
-        if (p && existsSync(p)) return p
+        if (this.isValidExecutable(p)) return p
       }
     }
 
@@ -51,14 +63,22 @@ export class VideoRendererService {
     const isWin = process.platform === 'win32'
     const exeName = isWin ? 'ffprobe.exe' : 'ffprobe'
 
+    // Ưu tiên tìm ffprobe cùng thư mục với ffmpeg đã tìm thấy
+    if (this.ffmpegPath && this.ffmpegPath !== 'ffmpeg' && this.ffmpegPath !== 'ffmpeg.exe') {
+      const siblingFfprobe = join(dirname(this.ffmpegPath), exeName)
+      if (this.isValidExecutable(siblingFfprobe)) {
+        return siblingFfprobe
+      }
+    }
+
     const resourcesDir = process.resourcesPath || ''
     const unpackedBin = join(resourcesDir, 'app.asar.unpacked', 'resources', 'bin', exeName)
     const directBin = join(resourcesDir, 'resources', 'bin', exeName)
     const devBin = join(process.cwd(), 'resources', 'bin', exeName)
 
-    if (existsSync(unpackedBin)) return unpackedBin
-    if (existsSync(directBin)) return directBin
-    if (existsSync(devBin)) return devBin
+    if (this.isValidExecutable(unpackedBin)) return unpackedBin
+    if (this.isValidExecutable(directBin)) return directBin
+    if (this.isValidExecutable(devBin)) return devBin
 
     if (isWin) {
       const winFallbacks = [
@@ -69,7 +89,7 @@ export class VideoRendererService {
         join(process.env.ProgramData || '', 'chocolatey', 'bin', 'ffprobe.exe')
       ]
       for (const p of winFallbacks) {
-        if (p && existsSync(p)) return p
+        if (this.isValidExecutable(p)) return p
       }
     }
 
@@ -125,7 +145,7 @@ export class VideoRendererService {
     // 1. Tạo file danh sách nối audio (concat list) và hợp nhất toàn bộ giọng đọc
     const concatListPath = join(outputDir, `audio_list_${Date.now()}.txt`)
     const concatContent = segments
-      .map((s) => `file '${s.audioPath.replace(/'/g, "'\\''")}'`)
+      .map((s) => `file '${s.audioPath.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`)
       .join('\n')
     writeFileSync(concatListPath, concatContent, 'utf-8')
 
@@ -287,10 +307,13 @@ export class VideoRendererService {
     })
 
     // Áp dụng phụ đề karaoke ASS lên trên cùng
+    // Chuẩn hóa đường dẫn tương thích FFmpeg filter trên cả Windows (escape dấu : và đổi \ thành /)
     const finalVideoLabel = 'v_final'
-    filterParts.push(
-      `[${currentVideoLabel}]ass=filename='${assSubtitlePath.replace(/'/g, "'\\''")}':fontsdir='/tmp'[${finalVideoLabel}]`
-    )
+    const escapedAssPath = assSubtitlePath
+      .replace(/\\/g, '/')
+      .replace(/:/g, '\\:')
+      .replace(/'/g, "\\'")
+    filterParts.push(`[${currentVideoLabel}]ass=filename='${escapedAssPath}'[${finalVideoLabel}]`)
 
     ffmpegArgs.push(
       '-filter_complex',

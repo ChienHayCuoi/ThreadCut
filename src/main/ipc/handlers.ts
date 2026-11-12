@@ -36,14 +36,13 @@ export function registerIpcHandlers(): void {
     return await crawler.crawlPost(url)
   })
 
-  // 2. Lọc 5 comment peak nhất bằng Gemini Flash
+  // 2. Lọc 10 comment peak nhất bằng Gemini Flash
   ipcMain.handle(
     'ai:filter-comments',
     async (
       _event,
       {
         apiKey,
-        model: _model,
         postText,
         comments
       }: { apiKey?: string; model?: string; postText: string; comments: ThreadComment[] }
@@ -51,7 +50,7 @@ export function registerIpcHandlers(): void {
       const currentSettings = settingsService.getSettings()
       const key = apiKey || currentSettings.geminiApiKey
       const gemini = new GeminiService(key)
-      return await gemini.pickPeakComments(postText, comments, 5)
+      return await gemini.pickPeakComments(postText, comments, 10)
     }
   )
 
@@ -99,6 +98,14 @@ export function registerIpcHandlers(): void {
         message: `Đang render ảnh giao diện thẻ Threads cho bài viết và ${selectedComments.length} bình luận...`
       })
 
+      const hasPostVideo = Boolean(post.localVideoPath && existsSync(post.localVideoPath))
+      const postLocalImage = !hasPostVideo
+        ? post.localImagePath || (post.localImagePaths && post.localImagePaths[0])
+        : undefined
+      const postImageUrl = !hasPostVideo
+        ? post.imageUrl || (post.imageUrls && post.imageUrls[0])
+        : undefined
+
       const postCardPath = join(workDir, 'card_post.png')
       await cardRenderer.renderThreadsCard(
         {
@@ -106,7 +113,10 @@ export function registerIpcHandlers(): void {
           avatarUrl: post.author.avatarUrl,
           text: post.text,
           likesCount: post.likesCount,
-          isPost: true
+          isPost: true,
+          imageUrl: postImageUrl,
+          localImagePath: postLocalImage,
+          hasVideo: hasPostVideo
         },
         postCardPath
       )
@@ -121,7 +131,9 @@ export function registerIpcHandlers(): void {
             avatarUrl: c.author.avatarUrl,
             text: c.text,
             likesCount: c.likesCount,
-            isPost: false
+            isPost: false,
+            imageUrl: c.imageUrl || (c.mediaUrls && c.mediaUrls[0]),
+            localImagePath: c.localImagePath
           },
           cPath
         )
@@ -152,13 +164,24 @@ export function registerIpcHandlers(): void {
 
       // Gắn ảnh Card vào từng segment tương ứng
       segments[0].cardImagePath = postCardPath
-      if (post.localVideoPath && existsSync(post.localVideoPath)) {
+      if (hasPostVideo) {
         segments[0].mediaVideoPath = post.localVideoPath
-        console.log(`[Pipeline] Đã gắn video bài viết (${post.localVideoPath}) vào segment bài viết gốc`)
+        console.log(
+          `[Pipeline] Đã gắn video bài viết (${post.localVideoPath}) vào segment bài viết gốc`
+        )
+      }
+      if (postLocalImage && existsSync(postLocalImage)) {
+        segments[0].mediaImagePath = postLocalImage
       }
       for (let i = 0; i < commentCardPaths.length; i++) {
         if (segments[i + 1]) {
           segments[i + 1].cardImagePath = commentCardPaths[i]
+          if (
+            selectedComments[i].localImagePath &&
+            existsSync(selectedComments[i].localImagePath!)
+          ) {
+            segments[i + 1].mediaImagePath = selectedComments[i].localImagePath
+          }
         }
       }
 

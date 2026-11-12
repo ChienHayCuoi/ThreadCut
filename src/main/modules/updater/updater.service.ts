@@ -7,8 +7,14 @@ import { pipeline } from 'stream/promises'
 import { UpdateInfoState, UpdateProgress } from '../../../shared/types'
 
 function compareSemver(v1: string, v2: string): number {
-  const p1 = v1.replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0)
-  const p2 = v2.replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0)
+  const p1 = v1
+    .replace(/^v/, '')
+    .split('.')
+    .map((n) => parseInt(n, 10) || 0)
+  const p2 = v2
+    .replace(/^v/, '')
+    .split('.')
+    .map((n) => parseInt(n, 10) || 0)
   for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
     const num1 = p1[i] || 0
     const num2 = p2[i] || 0
@@ -150,7 +156,7 @@ export class AppUpdaterService {
         if (directRes.ok && directRes.body) {
           res = directRes
         }
-      } catch (directErr) {
+      } catch {
         console.warn(
           '[Updater] Tải trực tiếp không khả dụng (do nhà mạng chặn CDN GitHub), chuyển sang CDN tăng tốc...'
         )
@@ -180,7 +186,7 @@ export class AppUpdaterService {
       let lastBytes = 0
 
       const fileStream = createWriteStream(destPath)
-      const webStream = Readable.fromWeb(res.body as any)
+      const webStream = Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0])
 
       webStream.on('data', (chunk: Buffer) => {
         transferred += chunk.length

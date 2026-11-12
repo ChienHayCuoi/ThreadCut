@@ -13,7 +13,7 @@ import { TtsSegment, TtsWordTimestamp } from '../../../shared/types'
 
 // Monkey-patch _connectWebSocket trên EdgeTTS prototype để loại bỏ header `host: 'speech.platform.bing.com'`
 // Header này khiến Microsoft Edge TTS API (api.msedgeservices.com) chặn kết nối và trả về HTTP 429
-// @ts-ignore
+// @ts-ignore - Monkey patching private internal method
 EdgeTTS.prototype._connectWebSocket = function (): Promise<WebSocket> {
   const wsConnect = new WebSocket(
     `wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1?Ocp-Apim-Subscription-Key=${TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${generateSecMsGecToken_V2()}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION_V2}`,
@@ -30,23 +30,26 @@ EdgeTTS.prototype._connectWebSocket = function (): Promise<WebSocket> {
   )
 
   return new Promise((resolve, reject) => {
-    // @ts-ignore
-    const timeout = setTimeout(() => {
-      reject(new Error('Timed out while connecting to Edge TTS'))
-      wsConnect.terminate()
-    }, (this as any).timeout || 15000)
+    // @ts-ignore - Timeout type inference
+    const timeout = setTimeout(
+      () => {
+        reject(new Error('Timed out while connecting to Edge TTS'))
+        wsConnect.terminate()
+      },
+      ((this as unknown as { timeout?: number }).timeout || 15000) as number
+    )
 
-    const onOpen = () => {
+    const onOpen = (): void => {
       clearTimeout(timeout)
       resolve(wsConnect)
     }
 
-    const onError = (error: Error) => {
+    const onError = (error: Error): void => {
       clearTimeout(timeout)
       reject(error)
     }
 
-    const onClose = () => {
+    const onClose = (): void => {
       clearTimeout(timeout)
       wsConnect.off('open', onOpen)
       wsConnect.off('error', onError)
@@ -176,7 +179,7 @@ export class TtsService {
   }
 
   /**
-   * Sinh toàn bộ chuỗi audio cho bài viết gốc và 5 comment đã chọn
+   * Sinh toàn bộ chuỗi audio cho bài viết gốc và danh sách comment đã chọn
    * Có giãn cách delay giữa các request để phòng ngừa rate-limit
    */
   async generateBatchSpeech(

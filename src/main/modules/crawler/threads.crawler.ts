@@ -31,7 +31,10 @@ export class ThreadsCrawler {
         (details, callback) => {
           const u = details.url
           if (
-            (u.includes('.mp4') || u.includes('/v/t') || u.includes('mime=video') || u.includes('_n.mp4')) &&
+            (u.includes('.mp4') ||
+              u.includes('/v/t') ||
+              u.includes('mime=video') ||
+              u.includes('_n.mp4')) &&
             !detectedVideoUrls.includes(u)
           ) {
             console.log('[Crawler] Bắt được request video Threads:', u.slice(0, 100))
@@ -115,16 +118,19 @@ export class ThreadsCrawler {
         (() => {
           const articles = Array.from(document.querySelectorAll('article, [data-pressable-container="true"]'));
           return articles.map((art) => {
-            const img = art.querySelector('img[alt*="profile"], img[alt*="avatar"], img');
-            let domUser = '';
             const userLink = art.querySelector('a[href*="/@"]');
+            let domUser = '';
             if (userLink) {
               const href = userLink.getAttribute('href') || '';
               const match = href.match(/@([^/?#]+)/);
               if (match) domUser = match[1];
             }
 
+            const avatarEl = art.querySelector('a[href*="/@"] img, img[alt*="profile" i], img[alt*="avatar" i]') || art.querySelector('img');
+            const avatarSrc = avatarEl ? (avatarEl.currentSrc || avatarEl.src || '') : '';
+
             let videoUrl = '';
+            let videoPoster = '';
             const videoEl = art.querySelector('video');
             const hasVideo = Boolean(videoEl);
             if (videoEl) {
@@ -133,18 +139,61 @@ export class ThreadsCrawler {
                 const srcEl = videoEl.querySelector('source');
                 if (srcEl) videoUrl = srcEl.src || '';
               }
+              videoPoster = videoEl.poster || '';
+            }
+
+            const allImgs = Array.from(art.querySelectorAll('img'));
+            const contentImages = [];
+            // Nếu bài viết hoặc comment có video thì không lấy ảnh đính kèm (để tránh lấy nhầm poster/thumbnail video)
+            if (!hasVideo) {
+              for (const img of allImgs) {
+                if (img === avatarEl) continue;
+                const src = img.currentSrc || img.src || '';
+                if (!src) continue;
+                if (src === avatarSrc) continue;
+                if (src.startsWith('data:') || src.includes('/rsrc.php/') || src.includes('/emoji.php')) continue;
+                const alt = (img.getAttribute('alt') || '').toLowerCase();
+                if (alt.includes('verified') || alt.includes('xác minh')) continue;
+
+                const rect = img.getBoundingClientRect();
+                const nw = img.naturalWidth || 0;
+                const nh = img.naturalHeight || 0;
+                if ((rect.width > 0 && rect.width < 45 && rect.height > 0 && rect.height < 45) || (nw > 0 && nw < 45 && nh > 0 && nh < 45)) {
+                  continue;
+                }
+                if (!contentImages.includes(src)) {
+                  contentImages.push(src);
+                }
+              }
+
+              const bgElements = Array.from(art.querySelectorAll('[style*="background-image"]'));
+              for (const bgEl of bgElements) {
+                const bg = bgEl.style.backgroundImage || '';
+                const m = bg.match(/url\\(["']?(https?:[^"']+)["']?\\)/);
+                if (m && m[1] && m[1] !== avatarSrc && !contentImages.includes(m[1])) {
+                  contentImages.push(m[1]);
+                }
+              }
             }
 
             return {
               text: art.innerText || '',
-              avatar: img ? img.src : '',
+              avatar: avatarSrc,
               domUser,
               hasVideo,
-              videoUrl
+              videoUrl,
+              images: contentImages
             };
           });
         })()
-      `)) as Array<{ text: string; avatar: string; domUser: string; hasVideo: boolean; videoUrl?: string }>
+      `)) as Array<{
+        text: string
+        avatar: string
+        domUser: string
+        hasVideo: boolean
+        videoUrl?: string
+        images?: string[]
+      }>
 
       if (Array.isArray(rawArticles) && rawArticles.length > 0) {
         // Trích xuất username từ URL: threads.net/@username/post/...
@@ -165,13 +214,14 @@ export class ThreadsCrawler {
         }
         let localVideoPath: string | undefined = undefined
 
+        const tempDir = join(app.getPath('temp'), 'threadcut_media')
+        if (!existsSync(tempDir)) mkdirSync(tempDir, { recursive: true })
+
         if (mainVideoUrl) {
           try {
             console.log(`[Crawler] Bắt đầu tải video của bài viết: ${mainVideoUrl.slice(0, 80)}...`)
-            const tempDir = join(app.getPath('temp'), 'threadcut_media')
-            if (!existsSync(tempDir)) mkdirSync(tempDir, { recursive: true })
             const dest = join(tempDir, `post_video_${Date.now()}.mp4`)
-            await this.downloadVideo(mainVideoUrl, dest)
+            await this.downloadFile(mainVideoUrl, dest)
             if (existsSync(dest)) {
               localVideoPath = dest
               console.log(`[Crawler] Tải video bài viết thành công: ${dest}`)
@@ -181,6 +231,26 @@ export class ThreadsCrawler {
           }
         }
 
+        // 1.2 Tải các hình ảnh của bài viết gốc nếu có (chỉ tải khi bài viết KHÔNG có video)
+        const isPostVideo = Boolean(rawArticles[0].hasVideo || mainVideoUrl || localVideoPath)
+        const postImages = isPostVideo ? [] : rawArticles[0].images || []
+        const localImagePaths: string[] = []
+        if (!isPostVideo) {
+          for (let idx = 0; idx < postImages.length; idx++) {
+            try {
+              const ext = postImages[idx].includes('.png') ? 'png' : 'jpg'
+              const dest = join(tempDir, `post_img_${idx}_${Date.now()}.${ext}`)
+              await this.downloadFile(postImages[idx], dest)
+              if (existsSync(dest)) {
+                localImagePaths.push(dest)
+              }
+            } catch (imgErr) {
+              console.warn(`[Crawler] Lỗi tải ảnh bài viết [${idx}]:`, imgErr)
+            }
+          }
+        }
+        const localImagePath = localImagePaths.length > 0 ? localImagePaths[0] : undefined
+
         // 2. Phân tích các bình luận tiếp theo
         const comments: ThreadComment[] = []
         for (let i = 1; i < rawArticles.length && comments.length < 35; i++) {
@@ -188,6 +258,24 @@ export class ThreadsCrawler {
           const item = this.parseArticleText(raw.text)
           const commentUser = raw.domUser || item.username || `user_${i}`
           if (item.content && item.content !== mainText) {
+            const commentImages = raw.images || []
+            const commentImageUrl = commentImages.length > 0 ? commentImages[0] : undefined
+            let commentLocalPath: string | undefined = undefined
+
+            if (commentImageUrl) {
+              try {
+                const ext = commentImageUrl.includes('.png') ? 'png' : 'jpg'
+                const dest = join(tempDir, `comment_img_${i}_${Date.now()}.${ext}`)
+                await this.downloadFile(commentImageUrl, dest)
+                if (existsSync(dest)) {
+                  commentLocalPath = dest
+                  console.log(`[Crawler] Tải ảnh bình luận @${commentUser} thành công: ${dest}`)
+                }
+              } catch (cImgErr) {
+                console.warn(`[Crawler] Lỗi tải ảnh bình luận ${i}:`, cImgErr)
+              }
+            }
+
             comments.push({
               id: `comment-${i}`,
               author: {
@@ -195,13 +283,16 @@ export class ThreadsCrawler {
                 avatarUrl: raw.avatar || ''
               },
               text: item.content,
-              likesCount: item.likesCount
+              likesCount: item.likesCount,
+              imageUrl: commentImageUrl,
+              mediaUrls: commentImages,
+              localImagePath: commentLocalPath
             })
           }
         }
 
         console.log(
-          `[Crawler] Bóc tách thành công bài viết của @${mainAuthor} (${mainLikes} likes, ${localVideoPath ? 'Có Video' : 'Không có video'}) với ${comments.length} bình luận`
+          `[Crawler] Bóc tách thành công bài viết của @${mainAuthor} (${mainLikes} likes, ${localVideoPath ? 'Có Video' : 'Không có video'}, ${localImagePaths.length} ảnh) với ${comments.length} bình luận`
         )
 
         return {
@@ -214,7 +305,11 @@ export class ThreadsCrawler {
           text: mainText,
           videoUrl: mainVideoUrl,
           localVideoPath,
-          mediaUrls: mainVideoUrl ? [mainVideoUrl] : [],
+          mediaUrls: isPostVideo ? [] : postImages,
+          imageUrl: isPostVideo ? undefined : postImages[0],
+          imageUrls: isPostVideo ? [] : postImages,
+          localImagePath: isPostVideo ? undefined : localImagePath,
+          localImagePaths: isPostVideo ? [] : localImagePaths,
           likesCount: mainLikes,
           commentsCount: comments.length,
           comments
@@ -227,9 +322,9 @@ export class ThreadsCrawler {
     return this.getFallbackData(url)
   }
 
-  private async downloadVideo(url: string, destPath: string): Promise<string> {
+  private async downloadFile(url: string, destPath: string): Promise<string> {
     const res = await fetch(url)
-    if (!res.ok) throw new Error(`HTTP ${res.status} when downloading video`)
+    if (!res.ok) throw new Error(`HTTP ${res.status} when downloading file: ${url}`)
     const arrayBuffer = await res.arrayBuffer()
     writeFileSync(destPath, Buffer.from(arrayBuffer))
     return destPath
@@ -350,6 +445,11 @@ export class ThreadsCrawler {
         avatarUrl: ''
       },
       text: 'TOPIC: Kể tên 1 con app thú vị mà bạn thấy khá niche nhưng dùng cực cuốn?',
+      imageUrl:
+        'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80',
+      imageUrls: [
+        'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80'
+      ],
       likesCount: 382,
       commentsCount: 5,
       comments: [
@@ -367,6 +467,11 @@ export class ThreadsCrawler {
           id: 'fb-2',
           author: { username: 'designer_boi', avatarUrl: '' },
           text: 'CleanMyMac với Raycast, bỏ Spotlight chuyển qua Raycast năng suất x10 lần.',
+          imageUrl:
+            'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=600&auto=format&fit=crop&q=80',
+          mediaUrls: [
+            'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=600&auto=format&fit=crop&q=80'
+          ],
           likesCount: 210,
           isPeak: true,
           selected: true,
@@ -377,6 +482,11 @@ export class ThreadsCrawler {
           id: 'fb-3',
           author: { username: 'genz_coder', avatarUrl: '' },
           text: 'App ngân hàng lúc nhận lương vào ngày 10, mở ra thấy tiền nhảy mà cuốn không muốn tắt.',
+          imageUrl:
+            'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=80',
+          mediaUrls: [
+            'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=80'
+          ],
           likesCount: 747,
           isPeak: true,
           selected: true,
@@ -402,6 +512,56 @@ export class ThreadsCrawler {
           selected: true,
           score: 8.6,
           reason: 'Niche độc lạ, phù hợp phong cách Threads'
+        },
+        {
+          id: 'fb-6',
+          author: { username: 'coffe_addict', avatarUrl: '' },
+          text: 'TickTick để quản lý thói quen mỗi ngày, hoàn thành xong nghe tiếng chuông ting ting siêu nghiện.',
+          likesCount: 312,
+          isPeak: true,
+          selected: true,
+          score: 9.3,
+          reason: 'Chia sẻ trải nghiệm tích cực và lượng tương tác tốt'
+        },
+        {
+          id: 'fb-7',
+          author: { username: 'hanoian_mood', avatarUrl: '' },
+          text: 'Duolingo, ngày nào con cú xanh cũng dí deadline học tiếng Anh sợ bay màu chuỗi streak.',
+          likesCount: 521,
+          isPeak: true,
+          selected: true,
+          score: 9.5,
+          reason: 'Bình luận meme cú xanh quen thuộc với giới trẻ'
+        },
+        {
+          id: 'fb-8',
+          author: { username: 'night_owl', avatarUrl: '' },
+          text: 'Endel tạo nhạc sóng não, bật lên lúc làm việc ban đêm cảm giác tập trung x2 luôn.',
+          likesCount: 165,
+          isPeak: true,
+          selected: true,
+          score: 8.9,
+          reason: 'Gợi ý thiết thực cho người làm việc đêm'
+        },
+        {
+          id: 'fb-9',
+          author: { username: 'minimal_life', avatarUrl: '' },
+          text: 'Notion nhưng chỉ dùng đúng 1 trang to-do list duy nhất, càng màu mè càng lười dùng.',
+          likesCount: 430,
+          isPeak: true,
+          selected: true,
+          score: 9.4,
+          reason: 'Quan điểm tối giản được rất nhiều người đồng tình'
+        },
+        {
+          id: 'fb-10',
+          author: { username: 'dunchin_fan', avatarUrl: '' },
+          text: 'Chính là con app ThreadCut này luôn, tự động cào bài viết rồi dựng video Shorts nhanh dã man!',
+          likesCount: 680,
+          isPeak: true,
+          selected: true,
+          score: 9.7,
+          reason: 'Bình luận dí dỏm và nhận được rất nhiều like'
         }
       ]
     }

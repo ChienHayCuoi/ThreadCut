@@ -281,26 +281,30 @@ export class VideoRendererService {
       const enableClause = `between(t,${st.startSec.toFixed(2)},${cardEndSec.toFixed(2)})`
 
       if (idx === 0 && hasPostVideo) {
-        // Bài viết có video: Đặt Card ở y = 140
+        // Bài viết có video: Thẻ bài viết (chỉ có text) đặt ở phía trên (y = 120)
         filterParts.push(
-          `[${currentVideoLabel}][${inputIdx}:v]overlay=(W-w)/2:140:enable='${enableClause}'[${nextLabel}]`
+          `[${currentVideoLabel}][${inputIdx}:v]overlay=(W-w)/2:120:enable='${enableClause}'[${nextLabel}]`
         )
         currentVideoLabel = nextLabel
 
-        // Ghép video của bài viết ở ngay dưới Card (y = 510)
+        // Video của bài viết đặt ở ngay dưới Card (y = 440) với kích thước khung hình lớn (scale 1000x820)
         const postVidLabel = 'v_post_vid'
         const vidEnable = `between(t,0,${st.endSec.toFixed(2)})`
         filterParts.push(
-          `[${postVideoInputIdx}:v]scale=900:680:force_original_aspect_ratio=decrease,setsar=1,format=yuva420p[${postVidLabel}_scaled]`
+          `[${postVideoInputIdx}:v]scale=1000:820:force_original_aspect_ratio=decrease,setsar=1,format=yuva420p[${postVidLabel}_scaled]`
         )
         filterParts.push(
-          `[${currentVideoLabel}][${postVidLabel}_scaled]overlay=(W-w)/2:510:enable='${vidEnable}'[${postVidLabel}]`
+          `[${currentVideoLabel}][${postVidLabel}_scaled]overlay=(W-w)/2:440:enable='${vidEnable}'[${postVidLabel}]`
         )
         currentVideoLabel = postVidLabel
       } else {
-        // Card bình thường: Đặt ở giữa màn hình (y = 380)
+        // Card bình thường (bài viết chỉ có ảnh / comment có ảnh / comment text only)
+        const hasCardMedia = Boolean(
+          st.segment.mediaImagePath && existsSync(st.segment.mediaImagePath)
+        )
+        const cardY = hasCardMedia ? 260 : 360
         filterParts.push(
-          `[${currentVideoLabel}][${inputIdx}:v]overlay=(W-w)/2:380:enable='${enableClause}'[${nextLabel}]`
+          `[${currentVideoLabel}][${inputIdx}:v]overlay=(W-w)/2:${cardY}:enable='${enableClause}'[${nextLabel}]`
         )
         currentVideoLabel = nextLabel
       }

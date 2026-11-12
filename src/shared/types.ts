@@ -14,6 +14,9 @@ export interface ThreadComment {
   selected?: boolean
   score?: number
   reason?: string
+  mediaUrls?: string[]
+  imageUrl?: string
+  localImagePath?: string
 }
 
 export interface ThreadPostDetail {
@@ -22,6 +25,10 @@ export interface ThreadPostDetail {
   author: ThreadAuthor
   text: string
   mediaUrls?: string[]
+  imageUrl?: string
+  imageUrls?: string[]
+  localImagePath?: string
+  localImagePaths?: string[]
   videoUrl?: string
   localVideoPath?: string
   likesCount?: number
@@ -46,6 +53,7 @@ export interface TtsSegment {
   subtitles: TtsWordTimestamp[]
   cardImagePath?: string
   mediaVideoPath?: string
+  mediaImagePath?: string
 }
 
 export type BackgroundMode = 'generator' | 'preset' | 'custom'
@@ -108,7 +116,8 @@ export interface UpdateProgress {
 }
 
 export interface UpdateInfoState {
-  status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
+  status:
+    'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
   currentVersion: string
   latestVersion?: string
   releaseNotes?: string

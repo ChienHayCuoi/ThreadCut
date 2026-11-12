@@ -167,11 +167,11 @@ function App(): React.JSX.Element {
       const post = await window.api.crawlPost(url)
       setPostData(post)
 
-      // 2. Gọi Gemini Flash API chấm điểm và chọn 5 comment peak nhất
+      // 2. Gọi Gemini Flash API chấm điểm và chọn 10 comment peak nhất
       setProgress({
         step: 'filtering_ai',
         percent: 35,
-        message: 'Google Gemini Flash đang phân tích ngữ cảnh & chọn 5 bình luận viral nhất...'
+        message: 'Google Gemini Flash đang phân tích ngữ cảnh & chọn 10 bình luận viral nhất...'
       })
 
       const topComments = await window.api.filterComments({
@@ -271,6 +271,22 @@ function App(): React.JSX.Element {
   const handleUpdateCommentText = (id: string, text: string): void => {
     setPeakComments((prev) => prev.map((c) => (c.id === id ? { ...c, text } : c)))
   }
+
+  // Thu thập toàn bộ hình ảnh đính kèm của bài viết gốc (chỉ áp dụng khi bài viết không có video)
+  const hasPostVideo = Boolean(postData?.localVideoPath || postData?.videoUrl)
+  const postImages: string[] = []
+  if (!hasPostVideo) {
+    if (postData?.localImagePaths && postData.localImagePaths.length > 0) {
+      postImages.push(...postData.localImagePaths.map((p) => toMediaUrl(p)))
+    } else if (postData?.localImagePath) {
+      postImages.push(toMediaUrl(postData.localImagePath))
+    } else if (postData?.imageUrls && postData.imageUrls.length > 0) {
+      postImages.push(...postData.imageUrls)
+    } else if (postData?.imageUrl) {
+      postImages.push(postData.imageUrl)
+    }
+  }
+  const hasPostImages = postImages.length > 0
 
   return (
     <div
@@ -660,8 +676,8 @@ function App(): React.JSX.Element {
                 }}
               />
 
-              {/* Khung xem trước Video của bài viết (nếu bài viết có video) */}
-              {Boolean(postData.localVideoPath || postData.videoUrl) && (
+              {/* Khung xem trước Hình ảnh của bài viết (nếu bài viết có hình ảnh) */}
+              {hasPostImages && (
                 <div
                   style={{
                     marginTop: '10px',
@@ -671,31 +687,111 @@ function App(): React.JSX.Element {
                     background: '#030712'
                   }}
                 >
-                  <video
-                    src={toMediaUrl(postData.localVideoPath) || postData.videoUrl}
-                    controls
-                    muted
-                    style={{ width: '100%', maxHeight: '180px', display: 'block', objectFit: 'contain' }}
-                  />
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: '8px',
+                      overflowX: 'auto',
+                      padding: '8px',
+                      background: '#050a15'
+                    }}
+                  >
+                    {postImages.map((imgSrc, imgIdx) => (
+                      <img
+                        key={imgIdx}
+                        src={imgSrc}
+                        alt={`Post image ${imgIdx + 1}`}
+                        style={{
+                          maxHeight: '160px',
+                          borderRadius: '6px',
+                          objectFit: 'cover',
+                          border: '1px solid #1e293b'
+                        }}
+                      />
+                    ))}
+                  </div>
                   <div
                     style={{
                       padding: '6px 10px',
                       background: '#0f172a',
                       fontSize: '11px',
-                      color: '#38bdf8',
+                      color: '#c084fc',
                       display: 'flex',
                       alignItems: 'center',
                       gap: '6px'
                     }}
                   >
-                    <span>🎬 Bài viết có video đính kèm (sẽ tự động phát trên khung bài viết trong video 9:16)</span>
+                    <span>
+                      🖼️ Bài viết có {postImages.length} hình ảnh đính kèm (sẽ hiển thị trên thẻ bài
+                      viết trong video 9:16)
+                    </span>
                   </div>
                 </div>
               )}
             </div>
           )}
 
-          {/* Top 5 Peak Comments */}
+          {/* Khung xem trước Video đính kèm của bài viết (hiển thị riêng ở dưới bài viết) */}
+          {postData && hasPostVideo && (
+            <div
+              style={{
+                background: '#111827',
+                padding: '16px',
+                borderRadius: '12px',
+                border: '1px solid #1f2937'
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: '10px'
+                }}
+              >
+                <span
+                  style={{
+                    fontWeight: 700,
+                    fontSize: '14px',
+                    color: '#38bdf8',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  🎬 Video đính kèm của bài viết
+                </span>
+                <span style={{ fontSize: '12px', color: '#94a3b8' }}>
+                  Hiển thị dưới thẻ bài viết trong video 9:16
+                </span>
+              </div>
+              <div
+                style={{
+                  borderRadius: '10px',
+                  overflow: 'hidden',
+                  border: '1px solid #374151',
+                  background: '#030712',
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'center'
+                }}
+              >
+                <video
+                  src={toMediaUrl(postData.localVideoPath) || postData.videoUrl}
+                  controls
+                  muted
+                  style={{
+                    width: '100%',
+                    maxHeight: '260px',
+                    display: 'block',
+                    objectFit: 'contain'
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Top 10 Peak Comments */}
           <div
             style={{
               background: '#111827',
@@ -846,6 +942,49 @@ function App(): React.JSX.Element {
                       }}
                     />
 
+                    {/* Hình ảnh đính kèm của bình luận nếu có */}
+                    {Boolean(
+                      c.localImagePath || c.imageUrl || (c.mediaUrls && c.mediaUrls.length > 0)
+                    ) && (
+                      <div
+                        style={{
+                          marginTop: '8px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px'
+                        }}
+                      >
+                        <div
+                          style={{
+                            borderRadius: '8px',
+                            overflow: 'hidden',
+                            border: '1px solid #374151',
+                            background: '#030712',
+                            maxHeight: '120px',
+                            display: 'inline-flex'
+                          }}
+                        >
+                          <img
+                            src={
+                              toMediaUrl(c.localImagePath) ||
+                              c.imageUrl ||
+                              (c.mediaUrls && c.mediaUrls[0])
+                            }
+                            alt="Comment attachment"
+                            style={{
+                              maxHeight: '120px',
+                              maxWidth: '220px',
+                              objectFit: 'contain',
+                              display: 'block'
+                            }}
+                          />
+                        </div>
+                        <span style={{ fontSize: '11px', color: '#c084fc' }}>
+                          📷 Có ảnh đính kèm (sẽ hiển thị trên thẻ bình luận)
+                        </span>
+                      </div>
+                    )}
+
                     {c.reason && (
                       <div
                         style={{
@@ -994,7 +1133,8 @@ function App(): React.JSX.Element {
               </div>
 
               <div style={{ fontSize: '11px', color: '#64748b' }}>
-                Tải lên video nền từ máy tính (Gameplay Minecraft, Subway Surfers, ASMR, vlog... tự động căn giữa chuẩn 9:16):
+                Tải lên video nền từ máy tính (Gameplay Minecraft, Subway Surfers, ASMR, vlog... tự
+                động căn giữa chuẩn 9:16):
               </div>
 
               <div style={{ display: 'flex', gap: '8px' }}>
@@ -1135,7 +1275,8 @@ function App(): React.JSX.Element {
                   borderRadius: '6px',
                   border: 'none',
                   background: previewTab === 'rendered' ? '#16a34a' : 'transparent',
-                  color: previewTab === 'rendered' ? '#fff' : lastOutputVideo ? '#94a3b8' : '#475569',
+                  color:
+                    previewTab === 'rendered' ? '#fff' : lastOutputVideo ? '#94a3b8' : '#475569',
                   fontSize: '11px',
                   fontWeight: 700,
                   cursor: lastOutputVideo ? 'pointer' : 'not-allowed'
@@ -1211,7 +1352,14 @@ function App(): React.JSX.Element {
                     <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>
                       Chưa chọn video nền
                     </div>
-                    <div style={{ fontSize: '10px', color: '#475569', marginTop: '4px', lineHeight: 1.4 }}>
+                    <div
+                      style={{
+                        fontSize: '10px',
+                        color: '#475569',
+                        marginTop: '4px',
+                        lineHeight: 1.4
+                      }}
+                    >
                       Chọn video từ máy để xem chuyển động loop tại đây
                     </div>
                   </div>
@@ -1226,7 +1374,7 @@ function App(): React.JSX.Element {
                     border: '1px solid #282828',
                     borderRadius: '14px',
                     padding: '12px',
-                    marginTop: Boolean(postData?.localVideoPath || postData?.videoUrl) ? '16px' : '40px',
+                    marginTop: hasPostVideo ? '10px' : '36px',
                     boxShadow: '0 10px 25px rgba(0,0,0,0.7)',
                     transition: 'all 0.3s'
                   }}
@@ -1266,28 +1414,55 @@ function App(): React.JSX.Element {
                       fontSize: '11px',
                       color: '#f3f5f7',
                       lineHeight: 1.4,
-                      maxHeight: Boolean(postData?.localVideoPath || postData?.videoUrl) ? '40px' : '60px',
+                      maxHeight: hasPostVideo ? '60px' : hasPostImages ? '40px' : '65px',
                       overflow: 'hidden'
                     }}
                   >
                     {postData
                       ? postData.text.slice(0, 90) + '...'
-                      : 'Nội dung bài viết Threads và 5 bình luận peak sẽ tự động hiển thị tại đây...'}
+                      : 'Nội dung bài viết Threads và 10 bình luận peak sẽ tự động hiển thị tại đây...'}
                   </div>
+
+                  {/* Hình ảnh bài viết trong Mockup (chỉ hiển thị khi bài viết KHÔNG có video) */}
+                  {!hasPostVideo && hasPostImages && (
+                    <div
+                      style={{
+                        marginTop: '8px',
+                        borderRadius: '8px',
+                        overflow: 'hidden',
+                        border: '1px solid #282828',
+                        background: '#000',
+                        maxHeight: '120px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}
+                    >
+                      <img
+                        src={postImages[0]}
+                        alt="Post media preview"
+                        style={{
+                          width: '100%',
+                          maxHeight: '120px',
+                          objectFit: 'cover'
+                        }}
+                      />
+                    </div>
+                  )}
                 </div>
 
-                {/* Video bài viết gốc hiển thị trong mockup (nếu có) */}
-                {Boolean(postData?.localVideoPath || postData?.videoUrl) && (
+                {/* Video bài viết gốc hiển thị trong mockup (hiển thị riêng ở dưới thẻ bài viết với khung to hơn) */}
+                {hasPostVideo && (
                   <div
                     style={{
                       position: 'relative',
                       zIndex: 1,
-                      marginTop: '8px',
-                      borderRadius: '10px',
+                      marginTop: '12px',
+                      borderRadius: '12px',
                       overflow: 'hidden',
-                      border: '1px solid #374151',
+                      border: '1.5px solid #374151',
                       background: '#000',
-                      boxShadow: '0 10px 20px rgba(0,0,0,0.6)'
+                      boxShadow: '0 12px 28px rgba(0,0,0,0.7)'
                     }}
                   >
                     <video
@@ -1297,7 +1472,12 @@ function App(): React.JSX.Element {
                       loop
                       muted
                       playsInline
-                      style={{ width: '100%', maxHeight: '130px', objectFit: 'contain', display: 'block' }}
+                      style={{
+                        width: '100%',
+                        maxHeight: '220px',
+                        objectFit: 'contain',
+                        display: 'block'
+                      }}
                     />
                   </div>
                 )}
@@ -1411,7 +1591,7 @@ function App(): React.JSX.Element {
                 <span
                   style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px', display: 'block' }}
                 >
-                  Dùng để đọc hiểu và lọc 5 comment peak nhất (Gemini 2.0 / 1.5 Flash cực rẻ &
+                  Dùng để đọc hiểu và lọc 10 comment peak nhất (Gemini 2.0 / 1.5 Flash cực rẻ &
                   nhanh).
                 </span>
               </div>
@@ -1536,7 +1716,8 @@ function App(): React.JSX.Element {
                   </button>
                 </div>
                 <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>
-                  Nếu máy Windows chưa cài FFmpeg, bạn có thể tải file ffmpeg.exe về và chọn vào ô này.
+                  Nếu máy Windows chưa cài FFmpeg, bạn có thể tải file ffmpeg.exe về và chọn vào ô
+                  này.
                 </div>
               </div>
 

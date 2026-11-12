@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron'
 import { join } from 'path'
-import { writeFileSync, existsSync, mkdirSync } from 'fs'
+import { writeFileSync, existsSync, mkdirSync, readFileSync } from 'fs'
 
 export interface CardRenderOptions {
   author: string
@@ -9,6 +9,10 @@ export interface CardRenderOptions {
   likesCount?: number
   timeAgo?: string
   isPost?: boolean
+  imageUrl?: string
+  imageUrls?: string[]
+  localImagePath?: string
+  hasVideo?: boolean
 }
 
 export class CardRendererService {
@@ -27,7 +31,7 @@ export class CardRendererService {
     return new Promise((resolve, reject) => {
       let win: BrowserWindow | null = new BrowserWindow({
         width: 1000,
-        height: 700,
+        height: 1400,
         show: false,
         frame: false,
         transparent: true,
@@ -77,7 +81,7 @@ export class CardRendererService {
             win = null
             reject(e)
           }
-        }, 300)
+        }, 400)
       })
 
       win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
@@ -104,6 +108,28 @@ export class CardRendererService {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/\n/g, '<br/>')
+
+    let mediaImgSrc = ''
+    if (opt.localImagePath && existsSync(opt.localImagePath)) {
+      try {
+        const buf = readFileSync(opt.localImagePath)
+        const ext = opt.localImagePath.split('.').pop()?.toLowerCase() || 'jpeg'
+        const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg'
+        mediaImgSrc = `data:${mime};base64,${buf.toString('base64')}`
+      } catch (err) {
+        console.warn('[CardRenderer] Lỗi đọc local image:', err)
+      }
+    }
+    if (!mediaImgSrc && opt.imageUrl) {
+      mediaImgSrc = opt.imageUrl
+    }
+
+    // Nếu bài viết có video thì không chèn ảnh vào thẻ bài viết (video sẽ hiển thị ở dưới thẻ)
+    if (opt.hasVideo && opt.isPost) {
+      mediaImgSrc = ''
+    }
+
+    const maxImgHeight = '440px'
 
     return `
 <!DOCTYPE html>
@@ -189,8 +215,25 @@ export class CardRendererService {
       line-height: 1.52;
       color: #f3f5f7;
       word-break: break-word;
-      margin-bottom: 28px;
+      margin-bottom: 24px;
       font-weight: 400;
+    }
+    .media-container {
+      width: 100%;
+      border-radius: 20px;
+      overflow: hidden;
+      margin-bottom: 24px;
+      background: #000000;
+      border: 1px solid #282828;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .media-img {
+      width: 100%;
+      max-height: ${maxImgHeight};
+      object-fit: cover;
+      display: block;
     }
     .footer {
       display: flex;
@@ -236,6 +279,14 @@ export class CardRendererService {
       <svg class="threads-logo" viewBox="0 0 192 192"><path d="M141.537 88.9883C140.71 88.5919 139.87 88.2104 139.019 87.8451C137.537 60.5382 122.616 44.905 97.5619 44.745C97.4484 44.7443 97.3355 44.7443 97.222 44.7443C82.2364 44.7443 69.7731 51.1409 62.102 62.7807L75.8711 72.3995C81.1687 64.3541 89.2828 60.778 97.2206 60.778C97.3061 60.778 97.3916 60.778 97.4771 60.7787C110.873 60.8654 120.301 69.8665 122.253 84.4533C114.78 82.7712 106.666 82.2619 97.9407 82.9463C68.9664 85.2212 50.8407 101.621 52.0911 123.633C53.3031 144.966 70.9231 158.461 93.3053 157.945C108.623 157.591 120.763 150.871 127.873 139.467C133.517 148.653 142.148 153.535 153.791 153.078C170.835 152.409 181.145 139.734 181.758 119.537C182.441 96.9731 170.198 80.6053 147.241 74.0041C145.419 73.4801 143.517 73.0189 141.537 88.9883ZM94.2023 142.022C81.8797 142.308 71.8598 134.428 71.2163 123.111C70.5728 111.795 80.1448 100.862 96.6974 99.5638C103.882 99.0001 110.833 99.4312 117.26 100.757C114.654 130.655 105.776 141.754 94.2023 142.022Z"/></svg>
     </div>
     <div class="content">${safeText}</div>
+    ${
+      mediaImgSrc
+        ? `
+    <div class="media-container">
+      <img class="media-img" src="${mediaImgSrc}" />
+    </div>`
+        : ''
+    }
     <div class="footer">
       <div class="action-btn">
         <svg class="icon heart" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>

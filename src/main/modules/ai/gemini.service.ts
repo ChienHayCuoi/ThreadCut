@@ -24,13 +24,13 @@ export class GeminiService {
   }
 
   /**
-   * Phân tích ngữ cảnh toàn bộ bình luận và chọn ra 5 bình luận hay/peak nhất.
+   * Phân tích ngữ cảnh toàn bộ bình luận và chọn ra 10 bình luận hay/peak nhất.
    * Tiêu chuẩn: Ưu tiên chọn bình luận có nhiều like, tim nhất trước, sau đó mới tới đánh giá nội dung.
    */
   async pickPeakComments(
     postContent: string,
     comments: ThreadComment[],
-    limit = 5
+    limit = 10
   ): Promise<ThreadComment[]> {
     if (!comments || comments.length === 0) {
       return []

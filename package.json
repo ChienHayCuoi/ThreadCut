@@ -1,6 +1,6 @@
 {
   "name": "DunChin",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "DunChin rảnh rỗi nên tự vide con app cho zui",
   "license": "MIT",
   "main": "./out/main/index.js",

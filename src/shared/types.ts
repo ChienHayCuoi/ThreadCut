@@ -79,7 +79,6 @@ export interface VideoTemplateConfig {
 export interface VideoJobProgress {
   step:
     | 'crawling'
-    | 'filtering_ai'
     | 'generating_tts'
     | 'rendering_cards'
     | 'rendering_video'
@@ -91,8 +90,6 @@ export interface VideoJobProgress {
 }
 
 export interface AppSettings {
-  geminiApiKey: string
-  geminiModel: string
   defaultTtsVoice: string
   ttsRate: string
   outputDir: string

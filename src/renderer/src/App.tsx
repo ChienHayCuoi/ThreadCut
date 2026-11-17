@@ -14,9 +14,6 @@ const formatLikes = (count?: number): string => {
   return count.toLocaleString()
 }
 
-/**
- * Chuyển đổi đường dẫn file local sang atom:// protocol an toàn cho cả Windows và macOS/Linux
- */
 const toMediaUrl = (pathOrUrl?: string | null): string => {
   if (!pathOrUrl) return ''
   if (
@@ -36,8 +33,6 @@ const toMediaUrl = (pathOrUrl?: string | null): string => {
 
 function App(): React.JSX.Element {
   const [settings, setSettings] = useState<AppSettings>({
-    geminiApiKey: '',
-    geminiModel: 'gemini-3.5-flash',
     defaultTtsVoice: 'vi-VN-HoaiMyNeural',
     ttsRate: 'default',
     outputDir: '',
@@ -163,36 +158,30 @@ function App(): React.JSX.Element {
     })
 
     try {
-      // 1. Cào dữ liệu
+      // 1. Cào dữ liệu bài viết & bình luận
       const post = await window.api.crawlPost(url)
       setPostData(post)
 
-      // 2. Gọi Gemini Flash API chấm điểm và chọn 10 comment peak nhất
-      setProgress({
-        step: 'filtering_ai',
-        percent: 35,
-        message: 'Google Gemini Flash đang phân tích ngữ cảnh & chọn 10 bình luận viral nhất...'
-      })
+      // 2. Bỏ qua chấm điểm AI: Hiển thị toàn bộ bình luận cào được (tối đa 20 bình luận)
+      const rawComments = post.comments || []
+      const commentsToShow = rawComments.slice(0, 20).map((c) => ({
+        ...c,
+        isPeak: true,
+        selected: true
+      }))
 
-      const topComments = await window.api.filterComments({
-        apiKey: settings.geminiApiKey,
-        model: settings.geminiModel,
-        postText: post.text,
-        comments: post.comments
-      })
-
-      setPeakComments(topComments)
+      setPeakComments(commentsToShow)
       setProgress({
         step: 'completed',
         percent: 100,
-        message: `Đã chọn được ${topComments.length} bình luận hay nhất! Sẵn sàng sản xuất video.`
+        message: `Đã cào được ${commentsToShow.length} bình luận! Sẵn sàng sản xuất video.`
       })
     } catch (err) {
       console.error(err)
       setProgress({
         step: 'error',
         percent: 100,
-        message: 'Lỗi trong quá trình xử lý cào hoặc lọc AI.'
+        message: 'Lỗi trong quá trình xử lý cào dữ liệu từ Threads.'
       })
     } finally {
       setLoading(false)
@@ -375,7 +364,7 @@ function App(): React.JSX.Element {
               gap: '6px'
             }}
           >
-            ⚙️ Cài đặt {settings.geminiApiKey ? '✅' : '⚠️'}
+            ⚙️ Cài đặt
           </button>
         </div>
       </header>
@@ -540,15 +529,10 @@ function App(): React.JSX.Element {
               border: '1px solid #1f2937'
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <div style={{ marginBottom: '8px' }}>
               <label style={{ fontWeight: 700, fontSize: '14px', color: '#60a5fa' }}>
                 1. Dán Link bài viết Threads:
               </label>
-              {!settings.geminiApiKey && (
-                <span style={{ fontSize: '12px', color: '#fbbf24' }}>
-                  ⚠️ Chưa cấu hình Gemini API Key (sẽ dùng lọc dự phòng)
-                </span>
-              )}
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
               <input
@@ -821,10 +805,10 @@ function App(): React.JSX.Element {
                   gap: '6px'
                 }}
               >
-                🔥 Bình luận Viral ({selectedCommentsCount}/{peakComments.length} đã chọn)
+                💬 Danh sách bình luận ({selectedCommentsCount}/{peakComments.length} đã chọn)
               </span>
               <span style={{ fontSize: '12px', color: '#94a3b8' }}>
-                Ưu tiên like/tim cao nhất & chấm điểm bởi Gemini Flash
+                Hiển thị tối đa 20 bình luận cào được từ Threads
               </span>
             </div>
 
@@ -891,19 +875,6 @@ function App(): React.JSX.Element {
                             }}
                           >
                             ❤️ {formatLikes(c.likesCount)}
-                          </span>
-                        )}
-                        {c.score && (
-                          <span
-                            style={{
-                              fontSize: '11px',
-                              background: '#854d0e',
-                              color: '#fef08a',
-                              padding: '1px 6px',
-                              borderRadius: '6px'
-                            }}
-                          >
-                            ⭐ {c.score} điểm
                           </span>
                         )}
                       </div>
@@ -1560,73 +1531,6 @@ function App(): React.JSX.Element {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    color: '#e2e8f0',
-                    marginBottom: '6px'
-                  }}
-                >
-                  Google Gemini API Key:
-                </label>
-                <input
-                  type="password"
-                  placeholder="AIzaSy..."
-                  value={settings.geminiApiKey}
-                  onChange={(e) => setSettings({ ...settings, geminiApiKey: e.target.value })}
-                  style={{
-                    width: '100%',
-                    padding: '10px',
-                    borderRadius: '8px',
-                    border: '1px solid #374151',
-                    background: '#030712',
-                    color: '#fff',
-                    fontSize: '13px',
-                    boxSizing: 'border-box'
-                  }}
-                />
-                <span
-                  style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px', display: 'block' }}
-                >
-                  Dùng để đọc hiểu và lọc 10 comment peak nhất (Gemini 2.0 / 1.5 Flash cực rẻ &
-                  nhanh).
-                </span>
-              </div>
-
-              <div>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    color: '#e2e8f0',
-                    marginBottom: '6px'
-                  }}
-                >
-                  Mô hình Gemini:
-                </label>
-                <select
-                  value={settings.geminiModel}
-                  onChange={(e) => setSettings({ ...settings, geminiModel: e.target.value })}
-                  style={{
-                    width: '100%',
-                    padding: '10px',
-                    borderRadius: '8px',
-                    border: '1px solid #374151',
-                    background: '#030712',
-                    color: '#fff',
-                    fontSize: '13px'
-                  }}
-                >
-                  <option value="gemini-3.5-flash">
-                    gemini-3.5-flash (Chuẩn - Tốc độ cao, phân tích tiếng Việt chuẩn xác)
-                  </option>
-                </select>
-              </div>
-
               <div>
                 <label
                   style={{

@@ -15,8 +15,6 @@ export class SettingsService {
 
     this.configPath = join(userData, 'settings.json')
     this.defaultSettings = {
-      geminiApiKey: process.env.GEMINI_API_KEY || '',
-      geminiModel: 'gemini-3.5-flash',
       defaultTtsVoice: 'vi-VN-HoaiMyNeural',
       ttsRate: 'default',
       outputDir: defaultOutput,
@@ -29,14 +27,6 @@ export class SettingsService {
       if (existsSync(this.configPath)) {
         const raw = readFileSync(this.configPath, 'utf-8')
         const parsed = JSON.parse(raw)
-        // Tự động nâng cấp nếu cấu hình cũ lưu gemini-2.0-flash hoặc gemini-1.5-flash
-        if (
-          !parsed.geminiModel ||
-          parsed.geminiModel.includes('2.0') ||
-          parsed.geminiModel.includes('1.5')
-        ) {
-          parsed.geminiModel = 'gemini-3.5-flash'
-        }
         return { ...this.defaultSettings, ...parsed }
       }
     } catch (e) {

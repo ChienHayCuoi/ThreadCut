@@ -12,12 +12,6 @@ interface ThreadCutAPI {
   getSettings: () => Promise<AppSettings>
   saveSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>
   crawlPost: (url: string) => Promise<ThreadPostDetail>
-  filterComments: (params: {
-    apiKey?: string
-    model?: string
-    postText: string
-    comments: ThreadComment[]
-  }) => Promise<ThreadComment[]>
   generateTts: (params: {
     text: string
     voice?: string

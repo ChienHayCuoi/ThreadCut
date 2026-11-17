@@ -2,7 +2,6 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import {
   ThreadPostDetail,
-  ThreadComment,
   AppSettings,
   FullPipelineParams,
   VideoJobProgress,
@@ -19,12 +18,6 @@ const api = {
   // Pipeline steps
   crawlPost: (url: string): Promise<ThreadPostDetail> =>
     ipcRenderer.invoke('crawler:fetch-post', url),
-  filterComments: (params: {
-    apiKey?: string
-    model?: string
-    postText: string
-    comments: ThreadComment[]
-  }): Promise<ThreadComment[]> => ipcRenderer.invoke('ai:filter-comments', params),
   generateTts: (params: { text: string; voice?: string; destPath?: string }) =>
     ipcRenderer.invoke('tts:generate', params),
   renderCard: (params: { cardOptions: unknown; destPath?: string }) =>

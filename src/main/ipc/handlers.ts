@@ -2,7 +2,6 @@ import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { mkdirSync, existsSync, readdirSync, copyFileSync } from 'fs'
 import { ThreadsCrawler } from '../modules/crawler/threads.crawler'
-import { GeminiService } from '../modules/ai/gemini.service'
 import { TtsService } from '../modules/tts/tts.service'
 import { CardRendererService } from '../modules/card/card.service'
 import { VideoRendererService } from '../modules/video/video.service'
@@ -11,7 +10,6 @@ import { AppUpdaterService } from '../modules/updater/updater.service'
 import {
   FullPipelineParams,
   VideoJobProgress,
-  ThreadComment,
   UpdateInfoState
 } from '../../shared/types'
 
@@ -36,25 +34,7 @@ export function registerIpcHandlers(): void {
     return await crawler.crawlPost(url)
   })
 
-  // 2. Lọc 10 comment peak nhất bằng Gemini Flash
-  ipcMain.handle(
-    'ai:filter-comments',
-    async (
-      _event,
-      {
-        apiKey,
-        postText,
-        comments
-      }: { apiKey?: string; model?: string; postText: string; comments: ThreadComment[] }
-    ) => {
-      const currentSettings = settingsService.getSettings()
-      const key = apiKey || currentSettings.geminiApiKey
-      const gemini = new GeminiService(key)
-      return await gemini.pickPeakComments(postText, comments, 10)
-    }
-  )
-
-  // 3. Tạo giọng đọc đơn lẻ
+  // 2. Tạo giọng đọc đơn lẻ
   ipcMain.handle('tts:generate', async (_event, { text, voice, destPath }) => {
     const currentSettings = settingsService.getSettings()
     const targetVoice = voice || currentSettings.defaultTtsVoice

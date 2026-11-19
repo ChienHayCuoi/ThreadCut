@@ -142,10 +142,37 @@ export class VideoRendererService {
       message: 'Chuẩn bị tài nguyên và kịch bản dựng video...'
     })
 
-    // 1. Tạo file danh sách nối audio (concat list) và hợp nhất toàn bộ giọng đọc
+    // Kiểm tra xem bài viết gốc có video đính kèm hay không
+    const postSegment = segments[0]
+    const hasPostVideo = Boolean(
+      postSegment?.mediaVideoPath && existsSync(postSegment.mediaVideoPath)
+    )
+
+    const postVideoPlayDuration = hasPostVideo ? 4 : 0
+    let postVideoAudioPath: string | null = null
+
+    if (hasPostVideo) {
+      postVideoAudioPath = join(outputDir, `post_vid_audio_${Date.now()}.mp3`)
+      await this.prepareVideoAudioClip(
+        postSegment.mediaVideoPath!,
+        postVideoPlayDuration,
+        postVideoAudioPath
+      )
+    }
+
+    // 1. Tạo file danh sách nối audio (concat list) và hợp nhất toàn bộ giọng đọc + âm thanh video bài viết
+    const audioFilesToConcat: string[] = []
+    for (let i = 0; i < segments.length; i++) {
+      audioFilesToConcat.push(segments[i].audioPath)
+      // Chèn âm thanh gốc của video ngay sau giọng đọc của bài viết gốc
+      if (i === 0 && postVideoAudioPath && existsSync(postVideoAudioPath)) {
+        audioFilesToConcat.push(postVideoAudioPath)
+      }
+    }
+
     const concatListPath = join(outputDir, `audio_list_${Date.now()}.txt`)
-    const concatContent = segments
-      .map((s) => `file '${s.audioPath.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`)
+    const concatContent = audioFilesToConcat
+      .map((p) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`)
       .join('\n')
     writeFileSync(concatListPath, concatContent, 'utf-8')
 
@@ -157,23 +184,40 @@ export class VideoRendererService {
 
     // 2. Tính toán chính xác thời gian bắt đầu và kết thúc của từng phân đoạn
     let currentTimeline = 0
+    let postTtsDuration = 0
     const segmentTimings: Array<{
       segment: TtsSegment
       startSec: number
       endSec: number
+      ttsEndSec?: number
     }> = []
 
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i]
       const realDur = await this.getAudioDuration(seg.audioPath)
       const startSec = currentTimeline
-      const endSec = currentTimeline + realDur
-      segmentTimings.push({
-        segment: { ...seg, durationSec: realDur },
-        startSec,
-        endSec
-      })
-      currentTimeline = endSec
+
+      if (i === 0) {
+        postTtsDuration = realDur
+        // Thẻ bài viết và khung video hiển thị suốt thời gian đọc + 3.5s video chạy
+        const endSec = currentTimeline + realDur + postVideoPlayDuration
+        segmentTimings.push({
+          segment: { ...seg, durationSec: realDur },
+          startSec,
+          endSec,
+          ttsEndSec: currentTimeline + realDur
+        })
+        currentTimeline = endSec
+      } else {
+        const endSec = currentTimeline + realDur
+        segmentTimings.push({
+          segment: { ...seg, durationSec: realDur },
+          startSec,
+          endSec,
+          ttsEndSec: endSec
+        })
+        currentTimeline = endSec
+      }
     }
 
     // Thời lượng video = thời lượng audio thực tế + 0.8s đệm tự nhiên cuối video để câu cuối đọc xong trọn vẹn
@@ -246,10 +290,6 @@ export class VideoRendererService {
     })
 
     // Input video của bài viết gốc (nếu bài viết có video đính kèm)
-    const postSegment = segmentTimings[0]?.segment
-    const hasPostVideo = Boolean(
-      postSegment?.mediaVideoPath && existsSync(postSegment.mediaVideoPath)
-    )
     let postVideoInputIdx = -1
     if (hasPostVideo) {
       postVideoInputIdx = cardIndexStart + segmentTimings.length
@@ -287,11 +327,13 @@ export class VideoRendererService {
         )
         currentVideoLabel = nextLabel
 
-        // Video của bài viết đặt ở ngay dưới Card (y = 440) với kích thước khung hình lớn (scale 1000x820)
+        // Video của bài viết đặt ở ngay dưới Card (y = 440) với kích thước khung hình (scale 1000x820)
+        // tpad giữ dừng ở frame đầu tiên trong lúc giọng TTS đọc nội dung bài viết (postTtsDuration)
+        // Ngay khi đọc xong, video bắt đầu chạy chuyển động từ frame 0 cùng âm thanh gốc trong 3.5s
         const postVidLabel = 'v_post_vid'
         const vidEnable = `between(t,0,${st.endSec.toFixed(2)})`
         filterParts.push(
-          `[${postVideoInputIdx}:v]scale=1000:820:force_original_aspect_ratio=decrease,setsar=1,format=yuva420p[${postVidLabel}_scaled]`
+          `[${postVideoInputIdx}:v]tpad=start_mode=clone:start_duration=${postTtsDuration.toFixed(2)},scale=1000:820:force_original_aspect_ratio=decrease,setsar=1,format=yuva420p[${postVidLabel}_scaled]`
         )
         filterParts.push(
           `[${currentVideoLabel}][${postVidLabel}_scaled]overlay=(W-w)/2:440:enable='${vidEnable}'[${postVidLabel}]`
@@ -394,6 +436,113 @@ export class VideoRendererService {
     })
   }
 
+  /**
+   * Kiểm tra file video/audio có luồng âm thanh hay không bằng ffprobe
+   */
+  private async hasAudioStream(filePath: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const ffprobePath = this.resolveFfprobeBinary()
+      const proc = spawn(ffprobePath, [
+        '-v',
+        'error',
+        '-select_streams',
+        'a:0',
+        '-show_entries',
+        'stream=codec_type',
+        '-of',
+        'default=noprint_wrappers=1:nokey=1',
+        filePath
+      ])
+      let stdout = ''
+      proc.stdout.on('data', (d) => (stdout += d.toString()))
+      proc.on('close', () => {
+        resolve(stdout.trim().toLowerCase() === 'audio')
+      })
+      proc.on('error', () => resolve(false))
+    })
+  }
+
+  /**
+   * Chuẩn bị đoạn âm thanh của video (3.5s)
+   * Nếu video có âm thanh: trích xuất 3.5s đầu
+   * Nếu không có âm thanh: sinh audio im lặng 3.5s
+   */
+  private async prepareVideoAudioClip(
+    videoPath: string,
+    durationSec: number,
+    outputPath: string
+  ): Promise<void> {
+    const hasAudio = await this.hasAudioStream(videoPath)
+    if (hasAudio) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn(this.ffmpegPath, [
+            '-y',
+            '-stream_loop',
+            '-1',
+            '-ss',
+            '0',
+            '-t',
+            durationSec.toFixed(2),
+            '-i',
+            videoPath,
+            '-vn',
+            '-c:a',
+            'libmp3lame',
+            '-ar',
+            '24000',
+            '-ac',
+            '1',
+            '-b:a',
+            '192k',
+            outputPath
+          ])
+          proc.on('close', (code) => {
+            if (code === 0 && existsSync(outputPath)) resolve()
+            else reject(new Error(`Trích xuất audio thất bại: code ${code}`))
+          })
+          proc.on('error', reject)
+        })
+        console.log(
+          `[VideoRenderer] Trích xuất thành công ${durationSec}s âm thanh gốc từ video bài viết: ${outputPath}`
+        )
+        return
+      } catch (err) {
+        console.warn(
+          `[VideoRenderer] Trích xuất âm thanh gốc video gặp lỗi, chuyển sang tạo âm thanh im lặng:`,
+          err
+        )
+      }
+    } else {
+      console.log(
+        `[VideoRenderer] Video bài viết không có âm thanh, tạo đoạn âm thanh im lặng ${durationSec}s`
+      )
+    }
+
+    // Fallback nếu không có audio hoặc lỗi trích xuất: tạo audio im lặng
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(this.ffmpegPath, [
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'anullsrc=r=24000:cl=mono',
+        '-t',
+        durationSec.toFixed(2),
+        '-c:a',
+        'libmp3lame',
+        '-b:a',
+        '192k',
+        outputPath
+      ])
+      proc.on('close', (code) => {
+        if (code === 0) resolve()
+        else reject(new Error(`Tạo audio im lặng thất bại: code ${code}`))
+      })
+      proc.on('error', reject)
+    })
+  }
+
   private async concatAudioFiles(listFilePath: string, outputPath: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const proc = spawn(this.ffmpegPath, [
@@ -403,8 +552,14 @@ export class VideoRendererService {
         '0',
         '-i',
         listFilePath,
-        '-c',
-        'copy',
+        '-c:a',
+        'libmp3lame',
+        '-ar',
+        '24000',
+        '-ac',
+        '1',
+        '-b:a',
+        '192k',
         '-y',
         outputPath
       ])
@@ -420,7 +575,12 @@ export class VideoRendererService {
    * Tạo phụ đề dạng ASS với hiệu ứng karaoke highlight từng chữ theo nhịp đọc
    */
   private generateAssSubtitles(
-    timings: Array<{ segment: TtsSegment; startSec: number; endSec: number }>,
+    timings: Array<{
+      segment: TtsSegment
+      startSec: number
+      endSec: number
+      ttsEndSec?: number
+    }>,
     assPath: string
   ): void {
     const lines: string[] = []
@@ -446,6 +606,7 @@ export class VideoRendererService {
     for (const t of timings) {
       const seg = t.segment
       const baseStartMs = Math.round(t.startSec * 1000)
+      const effectiveTtsEndMs = Math.round((t.ttsEndSec ?? t.endSec) * 1000)
 
       if (seg.subtitles && seg.subtitles.length > 0) {
         // Gom các từ thành các cụm 3-5 từ để hiển thị vừa vặn trên màn hình dọc 9:16
@@ -455,7 +616,7 @@ export class VideoRendererService {
           const chunkStartMs = baseStartMs + chunk[0].startMs
           const isLastChunk = i + chunkSize >= seg.subtitles.length
           const chunkEndMs = isLastChunk
-            ? Math.round(t.endSec * 1000)
+            ? effectiveTtsEndMs
             : baseStartMs + chunk[chunk.length - 1].endMs + 100
 
           const startStr = this.formatAssTimestamp(chunkStartMs)
@@ -473,7 +634,7 @@ export class VideoRendererService {
       } else {
         // Fallback nếu không có timestamp chi tiết
         const startStr = this.formatAssTimestamp(Math.round(t.startSec * 1000))
-        const endStr = this.formatAssTimestamp(Math.round(t.endSec * 1000))
+        const endStr = this.formatAssTimestamp(effectiveTtsEndMs)
         lines.push(`Dialogue: 0,${startStr},${endStr},Karaoke,,0,0,0,,${seg.text}`)
       }
     }

@@ -1,4 +1,4 @@
-import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
+import { ipcMain, dialog, shell, BrowserWindow, session } from 'electron'
 import { join } from 'path'
 import { mkdirSync, existsSync, readdirSync, copyFileSync } from 'fs'
 import { ThreadsCrawler } from '../modules/crawler/threads.crawler'
@@ -10,7 +10,8 @@ import { AppUpdaterService } from '../modules/updater/updater.service'
 import {
   FullPipelineParams,
   VideoJobProgress,
-  UpdateInfoState
+  UpdateInfoState,
+  ThreadsAuthStatus
 } from '../../shared/types'
 
 const settingsService = new SettingsService()
@@ -20,7 +21,101 @@ const cardRenderer = new CardRendererService()
 const updaterService = new AppUpdaterService()
 
 export function registerIpcHandlers(): void {
-  // 0. Quản lý cấu hình Settings
+  // 0. Quản lý trạng thái xác thực Threads
+  ipcMain.handle('auth:threads-status', async (): Promise<ThreadsAuthStatus> => {
+    try {
+      const ses = session.fromPartition('persist:threads')
+      const cookies = await ses.cookies.get({})
+      const threadsCookies = cookies.filter(
+        (c) =>
+          c.domain &&
+          (c.domain.includes('threads.net') ||
+            c.domain.includes('threads.com') ||
+            c.domain.includes('instagram.com'))
+      )
+      const hasSession = threadsCookies.some((c) => c.name === 'sessionid')
+      const dsUserCookie = threadsCookies.find((c) => c.name === 'ds_user_id')
+      return {
+        isLoggedIn: hasSession,
+        userId: dsUserCookie ? dsUserCookie.value : undefined
+      }
+    } catch (e) {
+      console.warn('[Handlers] Lỗi kiểm tra cookie Threads:', e)
+      return { isLoggedIn: false }
+    }
+  })
+
+  ipcMain.handle(
+    'auth:threads-login',
+    async (): Promise<{ success: boolean; isLoggedIn: boolean }> => {
+      const focusedWindow = BrowserWindow.getFocusedWindow()
+      return new Promise((resolve) => {
+        let authWin: BrowserWindow | null = new BrowserWindow({
+          width: 540,
+          height: 750,
+          title: 'Đăng nhập Threads / Instagram',
+          parent: focusedWindow || undefined,
+          modal: true,
+          autoHideMenuBar: true,
+          webPreferences: {
+            partition: 'persist:threads',
+            sandbox: false
+          }
+        })
+
+        authWin.loadURL('https://www.threads.com/login')
+
+        const ses = session.fromPartition('persist:threads')
+        const checkLogin = async (): Promise<boolean> => {
+          try {
+            const cookies = await ses.cookies.get({})
+            return cookies.some(
+              (c) =>
+                c.domain &&
+                (c.domain.includes('threads.com') ||
+                  c.domain.includes('threads.net') ||
+                  c.domain.includes('instagram.com')) &&
+                c.name === 'sessionid'
+            )
+          } catch {
+            return false
+          }
+        }
+
+        const interval = setInterval(async () => {
+          const loggedIn = await checkLogin()
+          if (loggedIn) {
+            clearInterval(interval)
+            if (authWin && !authWin.isDestroyed()) {
+              authWin.close()
+            }
+            resolve({ success: true, isLoggedIn: true })
+          }
+        }, 1500)
+
+        authWin.on('closed', async () => {
+          clearInterval(interval)
+          authWin = null
+          const loggedIn = await checkLogin()
+          resolve({ success: loggedIn, isLoggedIn: loggedIn })
+        })
+      })
+    }
+  )
+
+  ipcMain.handle('auth:threads-logout', async (): Promise<boolean> => {
+    try {
+      const ses = session.fromPartition('persist:threads')
+      await ses.clearStorageData()
+      console.log('[Handlers] Đã xóa toàn bộ session Threads')
+      return true
+    } catch (e) {
+      console.error('[Handlers] Lỗi đăng xuất Threads:', e)
+      return false
+    }
+  })
+
+  // Quản lý cấu hình Settings
   ipcMain.handle('settings:get', async () => {
     return settingsService.getSettings()
   })

@@ -4,10 +4,14 @@ import {
   AppSettings,
   FullPipelineParams,
   VideoJobProgress,
-  UpdateInfoState
+  UpdateInfoState,
+  ThreadsAuthStatus
 } from '../shared/types'
 
 interface ThreadCutAPI {
+  getThreadsAuthStatus: () => Promise<ThreadsAuthStatus>
+  loginThreads: () => Promise<{ success: boolean; isLoggedIn: boolean }>
+  logoutThreads: () => Promise<boolean>
   getSettings: () => Promise<AppSettings>
   saveSettings: (settings: Partial<AppSettings>) => Promise<AppSettings>
   crawlPost: (url: string) => Promise<ThreadPostDetail>

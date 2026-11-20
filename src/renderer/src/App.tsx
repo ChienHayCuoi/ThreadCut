@@ -4,7 +4,8 @@ import {
   ThreadPostDetail,
   AppSettings,
   VideoJobProgress,
-  UpdateInfoState
+  UpdateInfoState,
+  ThreadsAuthStatus
 } from '../../shared/types'
 
 const formatLikes = (count?: number): string => {
@@ -79,12 +80,21 @@ function App(): React.JSX.Element {
   const [checkingUpdate, setCheckingUpdate] = useState<boolean>(false)
   const [updateCheckMsg, setUpdateCheckMsg] = useState<string>('')
 
+  // Quản lý trạng thái đăng nhập Threads
+  const [threadsAuth, setThreadsAuth] = useState<ThreadsAuthStatus>({ isLoggedIn: false })
+
   // Load settings, attach progress listener & lắng nghe auto-update
   useEffect(() => {
     window.api.getSettings().then((s) => {
       setSettings(s)
       if (s.defaultTtsVoice) setSelectedVoice(s.defaultTtsVoice)
     })
+
+    // Kiểm tra đăng nhập Threads
+    window.api
+      .getThreadsAuthStatus()
+      .then(setThreadsAuth)
+      .catch((err) => console.warn('Lỗi kiểm tra auth Threads:', err))
 
     // Lắng nghe trạng thái cập nhật thời gian thực
     const unsubUpdater = window.api.onUpdaterStatus((status) => {
@@ -155,6 +165,30 @@ function App(): React.JSX.Element {
     window.api.installUpdate()
   }
 
+  const handleThreadsLogin = async (): Promise<void> => {
+    try {
+      const res = await window.api.loginThreads()
+      const status = await window.api.getThreadsAuthStatus()
+      setThreadsAuth(status)
+      if (res.isLoggedIn || status.isLoggedIn) {
+        if (url.trim() && progress.step === 'error') {
+          handleStartProcess()
+        }
+      }
+    } catch (err) {
+      console.error('Lỗi khi đăng nhập Threads:', err)
+    }
+  }
+
+  const handleThreadsLogout = async (): Promise<void> => {
+    try {
+      await window.api.logoutThreads()
+      setThreadsAuth({ isLoggedIn: false })
+    } catch (err) {
+      console.error('Lỗi khi đăng xuất Threads:', err)
+    }
+  }
+
   const handleSaveSettings = async (): Promise<void> => {
     const updated = await window.api.saveSettings(settings)
     setSettings(updated)
@@ -196,12 +230,14 @@ function App(): React.JSX.Element {
         percent: 100,
         message: `Đã cào được ${commentsToShow.length} bình luận! Sẵn sàng sản xuất video.`
       })
-    } catch (err) {
+    } catch (err: unknown) {
       console.error(err)
+      const rawMsg = err instanceof Error ? err.message : String(err)
+      const cleanMsg = rawMsg.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
       setProgress({
         step: 'error',
         percent: 100,
-        message: 'Lỗi trong quá trình xử lý cào dữ liệu từ Threads.'
+        message: cleanMsg || 'Lỗi trong quá trình xử lý cào dữ liệu từ Threads.'
       })
     } finally {
       setLoading(false)
@@ -491,6 +527,31 @@ function App(): React.JSX.Element {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <button
+            onClick={handleThreadsLogin}
+            title={
+              threadsAuth.isLoggedIn
+                ? 'Tài khoản Threads đã kết nối (Bấm để đăng nhập lại)'
+                : 'Đăng nhập tài khoản Threads để cào được các bài viết 18+ / giới hạn độ tuổi'
+            }
+            style={{
+              background: threadsAuth.isLoggedIn ? 'rgba(34, 197, 94, 0.15)' : '#1e293b',
+              color: threadsAuth.isLoggedIn ? '#4ade80' : '#94a3b8',
+              border: `1px solid ${threadsAuth.isLoggedIn ? 'rgba(34, 197, 94, 0.4)' : '#334155'}`,
+              padding: '8px 14px',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '13px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            <span>{threadsAuth.isLoggedIn ? '🟢' : '⚪'}</span>
+            {threadsAuth.isLoggedIn ? 'Threads đã kết nối' : 'Đăng nhập Threads'}
+          </button>
+
+          <button
             onClick={() => setShowSettings(true)}
             style={{
               background: '#1e293b',
@@ -756,6 +817,39 @@ function App(): React.JSX.Element {
                   }}
                 />
               </div>
+
+              {progress.step === 'error' &&
+                (progress.message.includes('đăng nhập') ||
+                  progress.message.includes('giới hạn') ||
+                  progress.message.includes('yêu cầu')) && (
+                  <div
+                    style={{ marginTop: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}
+                  >
+                    <button
+                      type="button"
+                      onClick={handleThreadsLogin}
+                      style={{
+                        background: '#2563eb',
+                        color: '#fff',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '6px',
+                        fontWeight: 700,
+                        fontSize: '12px',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.3)'
+                      }}
+                    >
+                      🔑 Đăng nhập Threads ngay
+                    </button>
+                    <span style={{ fontSize: '11px', color: '#fca5a5' }}>
+                      (Đăng nhập xong hệ thống sẽ tự động thử lại)
+                    </span>
+                  </div>
+                )}
             </div>
           )}
 
@@ -2394,6 +2488,81 @@ function App(): React.JSX.Element {
                 <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>
                   Nếu máy Windows chưa cài FFmpeg, bạn có thể tải file ffmpeg.exe về và chọn vào ô
                   này.
+                </div>
+              </div>
+
+              {/* Phần quản lý tài khoản Threads */}
+              <div
+                style={{
+                  borderTop: '1px solid #1f2937',
+                  paddingTop: '14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px'
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: '#e2e8f0' }}>
+                      Tài khoản Threads:
+                    </div>
+                    <div
+                      style={{
+                        fontSize: '12px',
+                        color: threadsAuth.isLoggedIn ? '#4ade80' : '#9ca3af',
+                        marginTop: '2px'
+                      }}
+                    >
+                      {threadsAuth.isLoggedIn
+                        ? `● Đã kết nối phiên đăng nhập ${threadsAuth.userId ? `(User ID: ${threadsAuth.userId})` : ''}`
+                        : '○ Chưa đăng nhập (Không cào được bài viết 18+ / giới hạn độ tuổi)'}
+                    </div>
+                  </div>
+                  {threadsAuth.isLoggedIn ? (
+                    <button
+                      type="button"
+                      onClick={handleThreadsLogout}
+                      style={{
+                        background: '#7f1d1d',
+                        color: '#fca5a5',
+                        border: '1px solid #991b1b',
+                        padding: '6px 14px',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Đăng xuất
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleThreadsLogin}
+                      style={{
+                        background: '#2563eb',
+                        color: '#ffffff',
+                        border: 'none',
+                        padding: '6px 14px',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Đăng nhập Threads
+                    </button>
+                  )}
+                </div>
+                <div style={{ fontSize: '11px', color: '#64748b' }}>
+                  Đăng nhập tài khoản giúp ThreadCut vượt qua kiểm tra giới hạn tuổi (18+) và các
+                  bài viết yêu cầu đăng nhập từ Meta.
                 </div>
               </div>
 

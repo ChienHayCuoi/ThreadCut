@@ -78,12 +78,7 @@ export interface VideoTemplateConfig {
 
 export interface VideoJobProgress {
   step:
-    | 'crawling'
-    | 'generating_tts'
-    | 'rendering_cards'
-    | 'rendering_video'
-    | 'completed'
-    | 'error'
+    'crawling' | 'generating_tts' | 'rendering_cards' | 'rendering_video' | 'completed' | 'error'
   percent: number
   message: string
   outputFilePath?: string
@@ -130,4 +125,9 @@ export interface UpdateCheckResult {
   downloadUrl?: string
   publishedAt?: string
   error?: string
+}
+
+export interface ThreadsAuthStatus {
+  isLoggedIn: boolean
+  userId?: string
 }

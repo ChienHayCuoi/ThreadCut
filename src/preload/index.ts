@@ -5,11 +5,18 @@ import {
   AppSettings,
   FullPipelineParams,
   VideoJobProgress,
-  UpdateInfoState
+  UpdateInfoState,
+  ThreadsAuthStatus
 } from '../shared/types'
 
 // Custom APIs for ThreadCut renderer
 const api = {
+  // Threads Authentication
+  getThreadsAuthStatus: (): Promise<ThreadsAuthStatus> => ipcRenderer.invoke('auth:threads-status'),
+  loginThreads: (): Promise<{ success: boolean; isLoggedIn: boolean }> =>
+    ipcRenderer.invoke('auth:threads-login'),
+  logoutThreads: (): Promise<boolean> => ipcRenderer.invoke('auth:threads-logout'),
+
   // Settings
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings: Partial<AppSettings>): Promise<AppSettings> =>

@@ -12,33 +12,41 @@ export class ThreadsCrawler {
     console.log(`[Crawler] Bắt đầu cào dữ liệu từ URL: ${url}`)
 
     // Chuẩn hóa URL
-    const cleanUrl = url.trim().split('?')[0]
+    let cleanUrl = url.trim().split('?')[0]
+    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+      cleanUrl = 'https://' + cleanUrl
+    }
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       let win: BrowserWindow | null = new BrowserWindow({
         width: 1280,
         height: 1200,
         show: false,
         webPreferences: {
           offscreen: true,
+          partition: 'persist:threads',
           sandbox: false
         }
       })
 
+      const targetWebContentsId = win.webContents.id
       const detectedVideoUrls: string[] = []
+
       win.webContents.session.webRequest.onBeforeRequest(
         { urls: ['*://*.cdninstagram.com/*', '*://*.fbcdn.net/*'] },
         (details, callback) => {
-          const u = details.url
-          if (
-            (u.includes('.mp4') ||
-              u.includes('/v/t') ||
-              u.includes('mime=video') ||
-              u.includes('_n.mp4')) &&
-            !detectedVideoUrls.includes(u)
-          ) {
-            console.log('[Crawler] Bắt được request video Threads:', u.slice(0, 100))
-            detectedVideoUrls.push(u)
+          if (details.webContentsId === targetWebContentsId) {
+            const u = details.url
+            if (
+              (u.includes('.mp4') ||
+                u.includes('/v/t') ||
+                u.includes('mime=video') ||
+                u.includes('_n.mp4')) &&
+              !detectedVideoUrls.includes(u)
+            ) {
+              console.log('[Crawler] Bắt được request video Threads:', u.slice(0, 100))
+              detectedVideoUrls.push(u)
+            }
           }
           callback({})
         }
@@ -49,10 +57,16 @@ export class ThreadsCrawler {
           '[Crawler] Quá thời gian chờ tải trang (18s), tiến hành bóc tách những gì đã có...'
         )
         if (win && !win.isDestroyed()) {
-          const result = await this.extractFromWindow(win, cleanUrl, detectedVideoUrls)
-          win.destroy()
-          win = null
-          resolve(result)
+          try {
+            const result = await this.extractFromWindow(win, cleanUrl, detectedVideoUrls)
+            win?.destroy()
+            win = null
+            resolve(result)
+          } catch (timeoutErr) {
+            win?.destroy()
+            win = null
+            reject(timeoutErr)
+          }
         }
       }, 18000)
 
@@ -74,7 +88,7 @@ export class ThreadsCrawler {
             console.error('[Crawler] Lỗi khi bóc tách DOM:', err)
             win?.destroy()
             win = null
-            resolve(this.getFallbackData(cleanUrl))
+            reject(err)
           }
         }, 3500)
       })
@@ -88,7 +102,7 @@ export class ThreadsCrawler {
         clearTimeout(timeoutId)
         win?.destroy()
         win = null
-        resolve(this.getFallbackData(cleanUrl))
+        reject(new Error(`Không thể kết nối đến Threads: ${err?.message || err}`))
       })
     })
   }
@@ -99,20 +113,60 @@ export class ThreadsCrawler {
     detectedVideoUrls: string[] = []
   ): Promise<ThreadPostDetail> {
     try {
+      // 0. Kiểm tra trạng thái trang (bài viết bị xóa, không tồn tại hoặc bị chặn giới hạn đối tượng)
+      const pageStatus = (await win.webContents.executeJavaScript(`
+      (() => {
+        const text = document.body ? document.body.innerText : '';
+        const currentUrl = window.location.href;
+
+        if (
+          currentUrl.includes('error=invalid_post') ||
+          text.includes("Sorry, this page isn't available") ||
+          text.includes('Trang này không hiển thị') ||
+          text.includes('Page not found')
+        ) {
+          return { type: 'invalid_post' };
+        }
+
+        if (
+          text.includes("This content isn't available to everyone") ||
+          text.includes("It can't be seen by certain audiences") ||
+          text.includes('Nội dung này không khả dụng cho mọi người') ||
+          text.includes('Nội dung này không dành cho mọi đối tượng')
+        ) {
+          return { type: 'restricted_audience' };
+        }
+
+        return { type: 'ok' };
+      })()
+    `)) as { type: string }
+
+      if (pageStatus.type === 'invalid_post') {
+        throw new Error(
+          'Link bài viết Threads không tồn tại hoặc đã bị xóa. Vui lòng kiểm tra lại URL (lưu ý chữ hoa/thường trong mã bài viết).'
+        )
+      }
+
+      if (pageStatus.type === 'restricted_audience') {
+        throw new Error(
+          'Bài viết này bị giới hạn độ tuổi hoặc đối tượng xem (yêu cầu đăng nhập Threads). Vui lòng đăng nhập tài khoản Threads trong phần Cài đặt và thử lại.'
+        )
+      }
+
       // Cho scroll nhẹ nhiều lần xuống dưới để trigger Threads nạp toàn bộ bình luận
       await win.webContents.executeJavaScript(`
-        new Promise((resolve) => {
-          let step = 0;
-          const timer = setInterval(() => {
-            window.scrollBy(0, 900);
-            step++;
-            if (step >= 3) {
-              clearInterval(timer);
-              setTimeout(resolve, 1000);
-            }
-          }, 500);
-        })
-      `)
+      new Promise((resolve) => {
+        let step = 0;
+        const timer = setInterval(() => {
+          window.scrollBy(0, 900);
+          step++;
+          if (step >= 3) {
+            clearInterval(timer);
+            setTimeout(resolve, 1000);
+          }
+        }, 500);
+      })
+    `)
 
       const rawArticles = (await win.webContents.executeJavaScript(`
         (() => {
@@ -315,11 +369,30 @@ export class ThreadsCrawler {
           comments
         }
       }
+
+      // Nếu không tìm thấy thẻ article nào
+      const isLoginRequired = (await win.webContents.executeJavaScript(`
+        Boolean(document.body && (
+          document.body.innerText.includes('Log in') ||
+          document.body.innerText.includes('Đăng nhập') ||
+          document.body.innerText.includes("This content isn't available") ||
+          document.body.innerText.includes('See Why')
+        ))
+      `)) as boolean
+
+      if (isLoginRequired) {
+        throw new Error(
+          'Bài viết này yêu cầu đăng nhập Threads mới xem được. Vui lòng đăng nhập tài khoản Threads và thử lại.'
+        )
+      }
+
+      throw new Error(
+        'Không thể tìm thấy nội dung bài viết từ liên kết này. Vui lòng kiểm tra lại URL.'
+      )
     } catch (e) {
       console.warn('[Crawler] extractFromWindow error:', e)
+      throw e
     }
-
-    return this.getFallbackData(url)
   }
 
   private async downloadFile(url: string, destPath: string): Promise<string> {
@@ -431,139 +504,5 @@ export class ThreadsCrawler {
     const cleanedNum = clean.replace(/[,.]/g, '')
     const num = parseInt(cleanedNum, 10)
     return isNaN(num) ? 0 : num
-  }
-
-  private getFallbackData(url: string): ThreadPostDetail {
-    const match = url.match(/@([^/]+)/)
-    const username = match ? match[1] : 'threads_vietnam'
-
-    return {
-      id: 'post-' + Date.now(),
-      url,
-      author: {
-        username,
-        avatarUrl: ''
-      },
-      text: 'TOPIC: Kể tên 1 con app thú vị mà bạn thấy khá niche nhưng dùng cực cuốn?',
-      imageUrl:
-        'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80',
-      imageUrls: [
-        'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80'
-      ],
-      likesCount: 382,
-      commentsCount: 5,
-      comments: [
-        {
-          id: 'fb-1',
-          author: { username: 'tech_lover', avatarUrl: '' },
-          text: 'Obsidian! Lúc đầu nhìn như notepad cổ lỗ sĩ, dùng quen rồi thì quản lý cuộc sống luôn.',
-          likesCount: 403,
-          isPeak: true,
-          selected: true,
-          score: 9.8,
-          reason: 'Bình luận chân thực, lượng like dẫn đầu'
-        },
-        {
-          id: 'fb-2',
-          author: { username: 'designer_boi', avatarUrl: '' },
-          text: 'CleanMyMac với Raycast, bỏ Spotlight chuyển qua Raycast năng suất x10 lần.',
-          imageUrl:
-            'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=600&auto=format&fit=crop&q=80',
-          mediaUrls: [
-            'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=600&auto=format&fit=crop&q=80'
-          ],
-          likesCount: 210,
-          isPeak: true,
-          selected: true,
-          score: 9.2,
-          reason: 'Gợi ý cực giá trị cho dân làm việc'
-        },
-        {
-          id: 'fb-3',
-          author: { username: 'genz_coder', avatarUrl: '' },
-          text: 'App ngân hàng lúc nhận lương vào ngày 10, mở ra thấy tiền nhảy mà cuốn không muốn tắt.',
-          imageUrl:
-            'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=80',
-          mediaUrls: [
-            'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=80'
-          ],
-          likesCount: 747,
-          isPeak: true,
-          selected: true,
-          score: 9.9,
-          reason: 'Độ hài hước cao, like khủng nhất bài viết'
-        },
-        {
-          id: 'fb-4',
-          author: { username: 'anonym_99', avatarUrl: '' },
-          text: 'Forest, trồng cây để tập trung học. Chết mất mấy cái cây vì mở Threads lướt dạo.',
-          likesCount: 124,
-          isPeak: true,
-          selected: true,
-          score: 8.8,
-          reason: 'Câu chuyện tự dìm hài hước'
-        },
-        {
-          id: 'fb-5',
-          author: { username: 'saigon_chill', avatarUrl: '' },
-          text: 'Flightradar24, rảnh rỗi ngồi xem máy bay bay trên đầu rồi tưởng tượng mình đang đi du lịch.',
-          likesCount: 89,
-          isPeak: true,
-          selected: true,
-          score: 8.6,
-          reason: 'Niche độc lạ, phù hợp phong cách Threads'
-        },
-        {
-          id: 'fb-6',
-          author: { username: 'coffe_addict', avatarUrl: '' },
-          text: 'TickTick để quản lý thói quen mỗi ngày, hoàn thành xong nghe tiếng chuông ting ting siêu nghiện.',
-          likesCount: 312,
-          isPeak: true,
-          selected: true,
-          score: 9.3,
-          reason: 'Chia sẻ trải nghiệm tích cực và lượng tương tác tốt'
-        },
-        {
-          id: 'fb-7',
-          author: { username: 'hanoian_mood', avatarUrl: '' },
-          text: 'Duolingo, ngày nào con cú xanh cũng dí deadline học tiếng Anh sợ bay màu chuỗi streak.',
-          likesCount: 521,
-          isPeak: true,
-          selected: true,
-          score: 9.5,
-          reason: 'Bình luận meme cú xanh quen thuộc với giới trẻ'
-        },
-        {
-          id: 'fb-8',
-          author: { username: 'night_owl', avatarUrl: '' },
-          text: 'Endel tạo nhạc sóng não, bật lên lúc làm việc ban đêm cảm giác tập trung x2 luôn.',
-          likesCount: 165,
-          isPeak: true,
-          selected: true,
-          score: 8.9,
-          reason: 'Gợi ý thiết thực cho người làm việc đêm'
-        },
-        {
-          id: 'fb-9',
-          author: { username: 'minimal_life', avatarUrl: '' },
-          text: 'Notion nhưng chỉ dùng đúng 1 trang to-do list duy nhất, càng màu mè càng lười dùng.',
-          likesCount: 430,
-          isPeak: true,
-          selected: true,
-          score: 9.4,
-          reason: 'Quan điểm tối giản được rất nhiều người đồng tình'
-        },
-        {
-          id: 'fb-10',
-          author: { username: 'dunchin_fan', avatarUrl: '' },
-          text: 'Chính là con app ThreadCut này luôn, tự động cào bài viết rồi dựng video Shorts nhanh dã man!',
-          likesCount: 680,
-          isPeak: true,
-          selected: true,
-          score: 9.7,
-          reason: 'Bình luận dí dỏm và nhận được rất nhiều like'
-        }
-      ]
-    }
   }
 }

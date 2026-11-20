@@ -382,6 +382,8 @@ export class VideoRendererService {
       '192k',
       '-pix_fmt',
       'yuv420p',
+      '-movflags',
+      '+faststart',
       '-y',
       outputFilePath
     )

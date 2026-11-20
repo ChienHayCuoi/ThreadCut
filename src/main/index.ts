@@ -1,12 +1,49 @@
-import { app, shell, BrowserWindow, ipcMain, protocol, net } from 'electron'
-import { join } from 'path'
-import { pathToFileURL } from 'url'
+import { app, shell, BrowserWindow, ipcMain, protocol } from 'electron'
+import { join, extname, normalize } from 'path'
+import { existsSync, statSync, createReadStream } from 'fs'
+import { Readable } from 'stream'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { registerIpcHandlers } from './ipc/handlers'
 
 app.commandLine.appendSwitch('no-sandbox')
 app.commandLine.appendSwitch('disable-gpu-sandbox')
+
+function getMimeType(filePath: string): string {
+  const ext = extname(filePath).toLowerCase()
+  switch (ext) {
+    case '.mp4':
+    case '.m4v':
+      return 'video/mp4'
+    case '.webm':
+      return 'video/webm'
+    case '.mov':
+      return 'video/quicktime'
+    case '.mkv':
+      return 'video/x-matroska'
+    case '.png':
+      return 'image/png'
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg'
+    case '.webp':
+      return 'image/webp'
+    case '.gif':
+      return 'image/gif'
+    case '.svg':
+      return 'image/svg+xml'
+    case '.mp3':
+      return 'audio/mpeg'
+    case '.wav':
+      return 'audio/wav'
+    case '.ogg':
+      return 'audio/ogg'
+    case '.m4a':
+      return 'audio/mp4'
+    default:
+      return 'application/octet-stream'
+  }
+}
 
 // Đăng ký custom protocol đặc quyền để phát video trực tiếp trong Renderer
 protocol.registerSchemesAsPrivileged([
@@ -61,23 +98,89 @@ function createWindow(): void {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
-  // Đăng ký protocol stream video local (hỗ trợ an toàn cả Windows và Linux/macOS)
+  // Đăng ký protocol stream video local hỗ trợ Range request (bắt buộc để phát video HTML5 mượt mà trên Chromium)
   protocol.handle('atom', (request) => {
     try {
-      const parsed = new URL(request.url)
-      let targetPath = parsed.searchParams.get('path')
+      let targetPath: string | null = null
+
+      try {
+        const parsed = new URL(request.url)
+        targetPath = parsed.searchParams.get('path')
+      } catch {
+        targetPath = null
+      }
+
       if (!targetPath) {
         // Fallback tương thích ngược định dạng cũ atom:// hoặc atom:///
-        let raw = decodeURIComponent(request.url.replace(/^atom:\/\//, ''))
+        let raw = decodeURIComponent(request.url.replace(/^atom:\/\/(media\/)?(\?path=)?/, ''))
         if (/^\/[a-zA-Z]:[/\\]/.test(raw)) {
           raw = raw.slice(1)
         }
         targetPath = raw
       }
-      return net.fetch(pathToFileURL(targetPath).toString())
+
+      if (!targetPath) {
+        return new Response('Not Found', { status: 404 })
+      }
+
+      targetPath = normalize(targetPath)
+
+      if (!existsSync(targetPath)) {
+        console.warn('[Protocol atom] File không tồn tại:', targetPath)
+        return new Response('File Not Found', { status: 404 })
+      }
+
+      const stat = statSync(targetPath)
+      const fileSize = stat.size
+      const mimeType = getMimeType(targetPath)
+      const rangeHeader = request.headers.get('range')
+
+      // Xử lý Range Request (bắt buộc đối với thẻ <video> trong Chromium khi phát hoặc tua)
+      if (rangeHeader) {
+        const parts = rangeHeader.replace(/bytes=/, '').split('-')
+        const start = parseInt(parts[0], 10)
+        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1
+
+        if (isNaN(start) || start >= fileSize) {
+          return new Response(null, {
+            status: 416,
+            headers: {
+              'Content-Range': `bytes */${fileSize}`,
+              'Accept-Ranges': 'bytes'
+            }
+          })
+        }
+
+        const chunkSize = end - start + 1
+        const nodeStream = createReadStream(targetPath, { start, end })
+        const webStream = Readable.toWeb(nodeStream)
+
+        return new Response(webStream as unknown as BodyInit, {
+          status: 206,
+          headers: {
+            'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': String(chunkSize),
+            'Content-Type': mimeType
+          }
+        })
+      }
+
+      // Trả về toàn bộ file nếu request không có header Range
+      const nodeStream = createReadStream(targetPath)
+      const webStream = Readable.toWeb(nodeStream)
+
+      return new Response(webStream as unknown as BodyInit, {
+        status: 200,
+        headers: {
+          'Content-Length': String(fileSize),
+          'Content-Type': mimeType,
+          'Accept-Ranges': 'bytes'
+        }
+      })
     } catch (err) {
-      console.error('[Protocol atom] Lỗi phân giải URL video:', request.url, err)
-      return new Response('Not Found', { status: 404 })
+      console.error('[Protocol atom] Lỗi đọc media:', request.url, err)
+      return new Response('Internal Server Error', { status: 500 })
     }
   })
 

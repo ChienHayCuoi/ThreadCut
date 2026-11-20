@@ -27,7 +27,11 @@ const toMediaUrl = (pathOrUrl?: string | null): string => {
   if (pathOrUrl.startsWith('atom://media/?path=')) {
     return pathOrUrl
   }
-  const cleanPath = pathOrUrl.replace(/^file:\/\//, '')
+  let cleanPath = pathOrUrl
+  if (cleanPath.startsWith('atom://')) {
+    cleanPath = decodeURIComponent(cleanPath.replace(/^atom:\/\/(media\/)?(\?path=)?/, ''))
+  }
+  cleanPath = cleanPath.replace(/^file:\/\//, '')
   return `atom://media/?path=${encodeURIComponent(cleanPath)}`
 }
 
@@ -50,6 +54,17 @@ function App(): React.JSX.Element {
   })
   const [postData, setPostData] = useState<ThreadPostDetail | null>(null)
   const [peakComments, setPeakComments] = useState<ThreadComment[]>([])
+  const [originalComments, setOriginalComments] = useState<ThreadComment[]>([])
+  const [draggedCommentId, setDraggedCommentId] = useState<string | null>(null)
+  const [dragOverCommentId, setDragOverCommentId] = useState<string | null>(null)
+  const [dropIndicatorPosition, setDropIndicatorPosition] = useState<'before' | 'after' | null>(
+    null
+  )
+  const [commentSearchKeyword, setCommentSearchKeyword] = useState<string>('')
+  const [commentFilterTab, setCommentFilterTab] = useState<'all' | 'selected' | 'media'>('all')
+  const [previewCardMode, setPreviewCardMode] = useState<'post' | 'comment'>('post')
+  const [previewCommentId, setPreviewCommentId] = useState<string | null>(null)
+
   const [selectedVoice, setSelectedVoice] = useState('vi-VN-HoaiMyNeural')
   const [selectedRate, setSelectedRate] = useState('+20%')
   const [lastOutputVideo, setLastOutputVideo] = useState<string | null>(null)
@@ -164,13 +179,18 @@ function App(): React.JSX.Element {
 
       // 2. Bỏ qua chấm điểm AI: Hiển thị toàn bộ bình luận cào được (tối đa 20 bình luận)
       const rawComments = post.comments || []
-      const commentsToShow = rawComments.slice(0, 20).map((c) => ({
+      const commentsToShow = rawComments.slice(0, 20).map((c, idx) => ({
         ...c,
+        id: c.id || `comment-${idx + 1}-${Date.now()}`,
         isPeak: true,
         selected: true
       }))
 
       setPeakComments(commentsToShow)
+      setOriginalComments(commentsToShow)
+      if (commentsToShow.length > 0) {
+        setPreviewCommentId(commentsToShow[0].id)
+      }
       setProgress({
         step: 'completed',
         percent: 100,
@@ -261,6 +281,140 @@ function App(): React.JSX.Element {
     setPeakComments((prev) => prev.map((c) => (c.id === id ? { ...c, text } : c)))
   }
 
+  // Sắp xếp lại thứ tự danh sách bình luận (Drag and drop)
+  const reorderComments = (
+    draggedId: string,
+    targetId: string,
+    position: 'before' | 'after'
+  ): void => {
+    if (draggedId === targetId) return
+    const fromIndex = peakComments.findIndex((c) => c.id === draggedId)
+    if (fromIndex === -1) return
+
+    const updated = [...peakComments]
+    const [moved] = updated.splice(fromIndex, 1)
+
+    const targetIndex = updated.findIndex((c) => c.id === targetId)
+    if (targetIndex === -1) return
+
+    const insertIndex = position === 'before' ? targetIndex : targetIndex + 1
+    updated.splice(insertIndex, 0, moved)
+    setPeakComments(updated)
+  }
+
+  const handleDragStart = (e: React.DragEvent<HTMLDivElement>, id: string): void => {
+    setDraggedCommentId(id)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', id)
+  }
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>, targetId: string): void => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (targetId === draggedCommentId) return
+
+    const rect = e.currentTarget.getBoundingClientRect()
+    const offset = e.clientY - rect.top
+    const position: 'before' | 'after' = offset < rect.height / 2 ? 'before' : 'after'
+
+    if (dragOverCommentId !== targetId || dropIndicatorPosition !== position) {
+      setDragOverCommentId(targetId)
+      setDropIndicatorPosition(position)
+    }
+  }
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>): void => {
+    const related = e.relatedTarget as Node | null
+    if (!related || !e.currentTarget.contains(related)) {
+      if (dragOverCommentId === e.currentTarget.dataset.commentId) {
+        setDragOverCommentId(null)
+        setDropIndicatorPosition(null)
+      }
+    }
+  }
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>, targetId: string): void => {
+    e.preventDefault()
+    if (draggedCommentId && draggedCommentId !== targetId && dropIndicatorPosition) {
+      reorderComments(draggedCommentId, targetId, dropIndicatorPosition)
+    }
+    setDraggedCommentId(null)
+    setDragOverCommentId(null)
+    setDropIndicatorPosition(null)
+  }
+
+  const handleDragEnd = (): void => {
+    setDraggedCommentId(null)
+    setDragOverCommentId(null)
+    setDropIndicatorPosition(null)
+  }
+
+  const handleMoveComment = (id: string, direction: 'up' | 'down'): void => {
+    const filteredIndex = filteredComments.findIndex((c) => c.id === id)
+    if (filteredIndex === -1) return
+    const neighborIndex = direction === 'up' ? filteredIndex - 1 : filteredIndex + 1
+    if (neighborIndex < 0 || neighborIndex >= filteredComments.length) return
+    const neighborId = filteredComments[neighborIndex].id
+    reorderComments(id, neighborId, direction === 'up' ? 'before' : 'after')
+  }
+
+  const handleSortByLikes = (): void => {
+    const sorted = [...peakComments].sort((a, b) => (b.likesCount || 0) - (a.likesCount || 0))
+    setPeakComments(sorted)
+  }
+
+  const handleSelectAllComments = (select: boolean): void => {
+    setPeakComments((prev) => prev.map((c) => ({ ...c, selected: select })))
+  }
+
+  const handleResetOriginalOrder = (): void => {
+    if (originalComments.length === 0) return
+    const currentMap = new Map(peakComments.map((c) => [c.id, c]))
+    const restored = originalComments.map((orig) => currentMap.get(orig.id) || orig)
+    setPeakComments(restored)
+  }
+
+  // Danh sách bình luận sau khi lọc theo keyword và filter tab
+  const filteredComments = peakComments.filter((c) => {
+    if (commentFilterTab === 'selected' && c.selected === false) return false
+    if (
+      commentFilterTab === 'media' &&
+      !c.localImagePath &&
+      !c.imageUrl &&
+      (!c.mediaUrls || c.mediaUrls.length === 0)
+    ) {
+      return false
+    }
+    if (commentSearchKeyword.trim()) {
+      const q = commentSearchKeyword.trim().toLowerCase()
+      const matchText = c.text?.toLowerCase().includes(q)
+      const matchAuthor = c.author?.username?.toLowerCase().includes(q)
+      if (!matchText && !matchAuthor) return false
+    }
+    return true
+  })
+
+  const commentsWithMediaCount = peakComments.filter((c) =>
+    Boolean(c.localImagePath || c.imageUrl || (c.mediaUrls && c.mediaUrls.length > 0))
+  ).length
+
+  // Bình luận được chọn để xem trước trong Mockup 9:16
+  const currentPreviewComment =
+    peakComments.find((c) => c.id === previewCommentId) ||
+    peakComments.find((c) => c.selected !== false) ||
+    peakComments[0]
+
+  const previewCommentOrder = currentPreviewComment
+    ? peakComments.findIndex((c) => c.id === currentPreviewComment.id) + 1
+    : 1
+
+  const previewCommentImage = currentPreviewComment
+    ? toMediaUrl(currentPreviewComment.localImagePath) ||
+      currentPreviewComment.imageUrl ||
+      (currentPreviewComment.mediaUrls && currentPreviewComment.mediaUrls[0]) ||
+      ''
+    : ''
+
   // Thu thập toàn bộ hình ảnh đính kèm của bài viết gốc (chỉ áp dụng khi bài viết không có video)
   const hasPostVideo = Boolean(postData?.localVideoPath || postData?.videoUrl)
   const postImages: string[] = []
@@ -328,18 +482,6 @@ function App(): React.JSX.Element {
               }}
             >
               ThreadCut
-              <span
-                style={{
-                  fontSize: '11px',
-                  background: '#2563eb',
-                  color: '#fff',
-                  padding: '2px 8px',
-                  borderRadius: '12px',
-                  fontWeight: 600
-                }}
-              >
-                v1.0
-              </span>
             </h1>
             <p style={{ margin: '2px 0 0 0', color: '#94a3b8', fontSize: '13px' }}>
               Tự động hóa sản xuất Video 9:16 (Shorts/TikTok/Reels) từ Threads
@@ -775,7 +917,7 @@ function App(): React.JSX.Element {
             </div>
           )}
 
-          {/* Top 10 Peak Comments */}
+          {/* Danh sách bình luận với tính năng Kéo thả sắp xếp và Lọc */}
           <div
             style={{
               background: '#111827',
@@ -787,31 +929,257 @@ function App(): React.JSX.Element {
               flexDirection: 'column'
             }}
           >
+            {/* Header */}
             <div
               style={{
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                marginBottom: '12px'
+                marginBottom: '12px',
+                flexWrap: 'wrap',
+                gap: '8px'
               }}
             >
-              <span
-                style={{
-                  fontWeight: 700,
-                  fontSize: '14px',
-                  color: '#f59e0b',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px'
-                }}
-              >
-                💬 Danh sách bình luận ({selectedCommentsCount}/{peakComments.length} đã chọn)
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span
+                  style={{
+                    fontWeight: 700,
+                    fontSize: '14px',
+                    color: '#f59e0b',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  💬 Danh sách bình luận ({selectedCommentsCount}/{peakComments.length} đã chọn)
+                </span>
+                {peakComments.length > 0 && (
+                  <span
+                    style={{
+                      background: '#1e293b',
+                      color: '#38bdf8',
+                      fontSize: '11px',
+                      padding: '2px 8px',
+                      borderRadius: '12px',
+                      fontWeight: 600,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    🖐️ Kéo thả để đổi thứ tự
+                  </span>
+                )}
+              </div>
               <span style={{ fontSize: '12px', color: '#94a3b8' }}>
                 Hiển thị tối đa 20 bình luận cào được từ Threads
               </span>
             </div>
 
+            {/* Filter & Action Toolbar */}
+            {peakComments.length > 0 && (
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                  marginBottom: '12px',
+                  padding: '10px',
+                  background: '#0a0f1d',
+                  borderRadius: '8px',
+                  border: '1px solid #1e293b'
+                }}
+              >
+                {/* Search & Tabs */}
+                <div
+                  style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}
+                >
+                  <div style={{ position: 'relative', flex: 1, minWidth: '180px' }}>
+                    <input
+                      type="text"
+                      placeholder="🔍 Lọc theo nội dung, @tác giả..."
+                      value={commentSearchKeyword}
+                      onChange={(e) => setCommentSearchKeyword(e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '6px 28px 6px 10px',
+                        borderRadius: '6px',
+                        border: '1px solid #374151',
+                        background: '#030712',
+                        color: '#fff',
+                        fontSize: '12px',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                    {commentSearchKeyword && (
+                      <button
+                        type="button"
+                        onClick={() => setCommentSearchKeyword('')}
+                        style={{
+                          position: 'absolute',
+                          right: '6px',
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#94a3b8',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                          padding: '2px 4px'
+                        }}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setCommentFilterTab('all')}
+                      style={{
+                        padding: '4px 8px',
+                        borderRadius: '6px',
+                        border: '1px solid #334155',
+                        background: commentFilterTab === 'all' ? '#2563eb' : '#0f172a',
+                        color: commentFilterTab === 'all' ? '#fff' : '#94a3b8',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Tất cả ({peakComments.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCommentFilterTab('selected')}
+                      style={{
+                        padding: '4px 8px',
+                        borderRadius: '6px',
+                        border: '1px solid #334155',
+                        background: commentFilterTab === 'selected' ? '#2563eb' : '#0f172a',
+                        color: commentFilterTab === 'selected' ? '#fff' : '#94a3b8',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Đã chọn ({selectedCommentsCount})
+                    </button>
+                    {commentsWithMediaCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setCommentFilterTab('media')}
+                        style={{
+                          padding: '4px 8px',
+                          borderRadius: '6px',
+                          border: '1px solid #334155',
+                          background: commentFilterTab === 'media' ? '#2563eb' : '#0f172a',
+                          color: commentFilterTab === 'media' ? '#fff' : '#94a3b8',
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Có ảnh ({commentsWithMediaCount})
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Quick actions row */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '6px',
+                    fontSize: '11px',
+                    borderTop: '1px solid #1e293b',
+                    paddingTop: '6px'
+                  }}
+                >
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button
+                      type="button"
+                      onClick={handleSortByLikes}
+                      title="Sắp xếp toàn bộ bình luận theo số lượt thích giảm dần"
+                      style={{
+                        background: '#1e293b',
+                        color: '#fca5a5',
+                        border: '1px solid #475569',
+                        padding: '3px 8px',
+                        borderRadius: '5px',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                        fontSize: '11px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}
+                    >
+                      ❤️ Xếp theo Like
+                    </button>
+                    {originalComments.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleResetOriginalOrder}
+                        title="Khôi phục lại thứ tự ban đầu khi cào từ Threads"
+                        style={{
+                          background: '#1e293b',
+                          color: '#94a3b8',
+                          border: '1px solid #475569',
+                          padding: '3px 8px',
+                          borderRadius: '5px',
+                          cursor: 'pointer',
+                          fontWeight: 600,
+                          fontSize: '11px'
+                        }}
+                      >
+                        ↺ Thứ tự gốc
+                      </button>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectAllComments(true)}
+                      style={{
+                        background: 'transparent',
+                        color: '#60a5fa',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '2px 4px',
+                        fontSize: '11px',
+                        textDecoration: 'underline'
+                      }}
+                    >
+                      ✓ Chọn tất cả
+                    </button>
+                    <span style={{ color: '#475569' }}>|</span>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectAllComments(false)}
+                      style={{
+                        background: 'transparent',
+                        color: '#94a3b8',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '2px 4px',
+                        fontSize: '11px',
+                        textDecoration: 'underline'
+                      }}
+                    >
+                      ✕ Bỏ chọn tất cả
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Empty or List */}
             {peakComments.length === 0 ? (
               <div
                 style={{
@@ -823,153 +1191,335 @@ function App(): React.JSX.Element {
               >
                 Chưa có dữ liệu. Hãy dán link bài viết và bấm &quot;Phân tích&quot;.
               </div>
+            ) : filteredComments.length === 0 ? (
+              <div
+                style={{
+                  color: '#94a3b8',
+                  fontSize: '13px',
+                  textAlign: 'center',
+                  padding: '30px 0',
+                  background: '#030712',
+                  borderRadius: '8px',
+                  border: '1px dashed #374151'
+                }}
+              >
+                Không có bình luận nào khớp với bộ lọc &quot;{commentSearchKeyword}&quot;.
+                <br />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCommentSearchKeyword('')
+                    setCommentFilterTab('all')
+                  }}
+                  style={{
+                    marginTop: '8px',
+                    background: '#2563eb',
+                    color: '#fff',
+                    border: 'none',
+                    padding: '4px 12px',
+                    borderRadius: '6px',
+                    fontSize: '12px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Xóa bộ lọc
+                </button>
+              </div>
             ) : (
               <div
-                style={{ display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto' }}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                  overflowY: 'auto',
+                  maxHeight: '440px',
+                  paddingRight: '4px'
+                }}
               >
-                {peakComments.map((c, idx) => (
-                  <div
-                    key={c.id || idx}
-                    style={{
-                      background: '#030712',
-                      padding: '12px',
-                      borderRadius: '8px',
-                      border: c.selected !== false ? '1px solid #1f2937' : '1px dashed #374151',
-                      opacity: c.selected !== false ? 1 : 0.45,
-                      transition: 'all 0.2s ease'
-                    }}
-                  >
+                {filteredComments.map((c) => {
+                  const globalIdx = peakComments.findIndex((item) => item.id === c.id)
+                  const isDragged = draggedCommentId === c.id
+                  const isDragOver = dragOverCommentId === c.id
+                  const isPreviewing = previewCardMode === 'comment' && previewCommentId === c.id
+
+                  let cardBorder = c.selected !== false ? '1px solid #1f2937' : '1px dashed #374151'
+                  let boxShadow = 'none'
+
+                  if (isDragOver && dropIndicatorPosition === 'before') {
+                    cardBorder = '1px solid #38bdf8'
+                    boxShadow = '0 -3px 0 0 #38bdf8, 0 4px 12px rgba(56,189,248,0.25)'
+                  } else if (isDragOver && dropIndicatorPosition === 'after') {
+                    cardBorder = '1px solid #38bdf8'
+                    boxShadow = '0 3px 0 0 #38bdf8, 0 4px 12px rgba(56,189,248,0.25)'
+                  } else if (isPreviewing) {
+                    cardBorder = '1px solid #f59e0b'
+                    boxShadow = '0 0 10px rgba(245, 158, 11, 0.2)'
+                  }
+
+                  return (
                     <div
+                      key={c.id}
+                      data-comment-id={c.id}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, c.id)}
+                      onDragOver={(e) => handleDragOver(e, c.id)}
+                      onDragLeave={handleDragLeave}
+                      onDrop={(e) => handleDrop(e, c.id)}
+                      onDragEnd={handleDragEnd}
                       style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        marginBottom: '6px'
+                        background: isDragged ? '#0e1726' : isPreviewing ? '#0f172a' : '#030712',
+                        padding: '10px 12px',
+                        borderRadius: '8px',
+                        border: cardBorder,
+                        boxShadow,
+                        opacity: isDragged ? 0.35 : c.selected !== false ? 1 : 0.45,
+                        transform: isDragged ? 'scale(0.98)' : 'none',
+                        transition:
+                          'border 0.15s ease, box-shadow 0.15s ease, background 0.15s ease',
+                        cursor: 'grab'
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span
-                          style={{
-                            background: '#3b82f6',
-                            color: '#fff',
-                            fontSize: '11px',
-                            padding: '1px 6px',
-                            borderRadius: '6px',
-                            fontWeight: 700
-                          }}
-                        >
-                          #{idx + 1}
-                        </span>
-                        <span style={{ fontWeight: 700, fontSize: '13px', color: '#60a5fa' }}>
-                          @{c.author.username}
-                        </span>
-                        {c.likesCount !== undefined && (
+                      {/* Top Header of Card */}
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          marginBottom: '6px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          {/* Drag handle */}
+                          <div
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              width: '18px',
+                              height: '22px',
+                              color: '#64748b',
+                              cursor: 'grab',
+                              userSelect: 'none'
+                            }}
+                            title="Kéo thả để sắp xếp vị trí hiển thị"
+                          >
+                            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                              <circle cx="5" cy="3" r="1.5" />
+                              <circle cx="11" cy="3" r="1.5" />
+                              <circle cx="5" cy="8" r="1.5" />
+                              <circle cx="11" cy="8" r="1.5" />
+                              <circle cx="5" cy="13" r="1.5" />
+                              <circle cx="11" cy="13" r="1.5" />
+                            </svg>
+                          </div>
+
+                          {/* Quick Up/Down buttons */}
+                          <div
+                            style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}
+                            onMouseDown={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              disabled={globalIdx === 0}
+                              onClick={() => handleMoveComment(c.id, 'up')}
+                              title="Chuyển lên trên"
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: globalIdx === 0 ? '#334155' : '#94a3b8',
+                                cursor: globalIdx === 0 ? 'not-allowed' : 'pointer',
+                                padding: 0,
+                                fontSize: '8px',
+                                lineHeight: 1
+                              }}
+                            >
+                              ▲
+                            </button>
+                            <button
+                              type="button"
+                              disabled={globalIdx === peakComments.length - 1}
+                              onClick={() => handleMoveComment(c.id, 'down')}
+                              title="Chuyển xuống dưới"
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color:
+                                  globalIdx === peakComments.length - 1 ? '#334155' : '#94a3b8',
+                                cursor:
+                                  globalIdx === peakComments.length - 1 ? 'not-allowed' : 'pointer',
+                                padding: 0,
+                                fontSize: '8px',
+                                lineHeight: 1
+                              }}
+                            >
+                              ▼
+                            </button>
+                          </div>
+
+                          {/* Order badge */}
                           <span
                             style={{
+                              background: '#3b82f6',
+                              color: '#fff',
                               fontSize: '11px',
-                              background: '#3f1d24',
-                              color: '#fca5a5',
                               padding: '1px 6px',
                               borderRadius: '6px',
                               fontWeight: 700
                             }}
+                            title={`Thứ tự phát trong video: #${globalIdx + 1}`}
                           >
-                            ❤️ {formatLikes(c.likesCount)}
+                            #{globalIdx + 1}
                           </span>
-                        )}
+
+                          <span style={{ fontWeight: 700, fontSize: '13px', color: '#60a5fa' }}>
+                            @{c.author.username}
+                          </span>
+
+                          {c.likesCount !== undefined && (
+                            <span
+                              style={{
+                                fontSize: '11px',
+                                background: '#3f1d24',
+                                color: '#fca5a5',
+                                padding: '1px 6px',
+                                borderRadius: '6px',
+                                fontWeight: 700
+                              }}
+                            >
+                              ❤️ {formatLikes(c.likesCount)}
+                            </span>
+                          )}
+                        </div>
+
+                        <div
+                          style={{ display: 'flex', alignItems: 'center', gap: '10px' }}
+                          onMouseDown={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPreviewTab('layout')
+                              setPreviewCardMode('comment')
+                              setPreviewCommentId(c.id)
+                            }}
+                            title="Xem mô phỏng thẻ này trên khung Preview 9:16"
+                            style={{
+                              background: isPreviewing ? '#f59e0b' : '#1e293b',
+                              color: isPreviewing ? '#000' : '#94a3b8',
+                              border: isPreviewing ? '1px solid #f59e0b' : '1px solid #334155',
+                              padding: '2px 7px',
+                              borderRadius: '5px',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '3px'
+                            }}
+                          >
+                            👁️ {isPreviewing ? 'Đang xem' : 'Xem thẻ'}
+                          </button>
+
+                          <label
+                            style={{
+                              fontSize: '12px',
+                              color: '#94a3b8',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={c.selected !== false}
+                              onChange={() => handleToggleComment(c.id)}
+                            />
+                            Sử dụng
+                          </label>
+                        </div>
                       </div>
-                      <label
-                        style={{
-                          fontSize: '12px',
-                          color: '#94a3b8',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '4px',
-                          cursor: 'pointer'
-                        }}
-                      >
+
+                      {/* Text Input */}
+                      <div onMouseDown={(e) => e.stopPropagation()}>
                         <input
-                          type="checkbox"
-                          checked={c.selected !== false}
-                          onChange={() => handleToggleComment(c.id)}
+                          type="text"
+                          value={c.text}
+                          onChange={(e) => handleUpdateCommentText(c.id, e.target.value)}
+                          style={{
+                            width: '100%',
+                            background: '#111827',
+                            border: '1px solid #374151',
+                            borderRadius: '6px',
+                            padding: '6px 8px',
+                            color: '#f8fafc',
+                            fontSize: '13px',
+                            boxSizing: 'border-box',
+                            cursor: 'text'
+                          }}
                         />
-                        Sử dụng
-                      </label>
-                    </div>
+                      </div>
 
-                    <input
-                      type="text"
-                      value={c.text}
-                      onChange={(e) => handleUpdateCommentText(c.id, e.target.value)}
-                      style={{
-                        width: '100%',
-                        background: '#111827',
-                        border: '1px solid #374151',
-                        borderRadius: '6px',
-                        padding: '6px 8px',
-                        color: '#f8fafc',
-                        fontSize: '13px',
-                        boxSizing: 'border-box'
-                      }}
-                    />
-
-                    {/* Hình ảnh đính kèm của bình luận nếu có */}
-                    {Boolean(
-                      c.localImagePath || c.imageUrl || (c.mediaUrls && c.mediaUrls.length > 0)
-                    ) && (
-                      <div
-                        style={{
-                          marginTop: '8px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '10px'
-                        }}
-                      >
+                      {/* Hình ảnh đính kèm của bình luận nếu có */}
+                      {Boolean(
+                        c.localImagePath || c.imageUrl || (c.mediaUrls && c.mediaUrls.length > 0)
+                      ) && (
                         <div
                           style={{
-                            borderRadius: '8px',
-                            overflow: 'hidden',
-                            border: '1px solid #374151',
-                            background: '#030712',
-                            maxHeight: '120px',
-                            display: 'inline-flex'
+                            marginTop: '8px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px'
+                          }}
+                          onMouseDown={(e) => e.stopPropagation()}
+                        >
+                          <div
+                            style={{
+                              borderRadius: '8px',
+                              overflow: 'hidden',
+                              border: '1px solid #374151',
+                              background: '#030712',
+                              maxHeight: '120px',
+                              display: 'inline-flex'
+                            }}
+                          >
+                            <img
+                              src={
+                                toMediaUrl(c.localImagePath) ||
+                                c.imageUrl ||
+                                (c.mediaUrls && c.mediaUrls[0])
+                              }
+                              alt="Comment attachment"
+                              draggable={false}
+                              style={{
+                                maxHeight: '120px',
+                                maxWidth: '220px',
+                                objectFit: 'contain',
+                                display: 'block'
+                              }}
+                            />
+                          </div>
+                          <span style={{ fontSize: '11px', color: '#c084fc' }}>
+                            📷 Có ảnh đính kèm (sẽ hiển thị trên thẻ bình luận)
+                          </span>
+                        </div>
+                      )}
+
+                      {c.reason && (
+                        <div
+                          style={{
+                            fontSize: '11px',
+                            color: '#9ca3af',
+                            marginTop: '4px',
+                            fontStyle: 'italic'
                           }}
                         >
-                          <img
-                            src={
-                              toMediaUrl(c.localImagePath) ||
-                              c.imageUrl ||
-                              (c.mediaUrls && c.mediaUrls[0])
-                            }
-                            alt="Comment attachment"
-                            style={{
-                              maxHeight: '120px',
-                              maxWidth: '220px',
-                              objectFit: 'contain',
-                              display: 'block'
-                            }}
-                          />
+                          💡 {c.reason}
                         </div>
-                        <span style={{ fontSize: '11px', color: '#c084fc' }}>
-                          📷 Có ảnh đính kèm (sẽ hiển thị trên thẻ bình luận)
-                        </span>
-                      </div>
-                    )}
-
-                    {c.reason && (
-                      <div
-                        style={{
-                          fontSize: '11px',
-                          color: '#9ca3af',
-                          marginTop: '4px',
-                          fontStyle: 'italic'
-                        }}
-                      >
-                        💡 {c.reason}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -1258,6 +1808,115 @@ function App(): React.JSX.Element {
             </div>
           </div>
 
+          {/* Mockup Card Mode Switcher (Bài viết vs Bình luận) */}
+          {previewTab === 'layout' && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                width: '270px',
+                marginBottom: '8px',
+                padding: '3px 6px',
+                background: '#111827',
+                borderRadius: '8px',
+                border: '1px solid #1f2937'
+              }}
+            >
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <button
+                  type="button"
+                  onClick={() => setPreviewCardMode('post')}
+                  style={{
+                    background: previewCardMode === 'post' ? '#2563eb' : 'transparent',
+                    color: previewCardMode === 'post' ? '#fff' : '#94a3b8',
+                    border: 'none',
+                    padding: '3px 8px',
+                    borderRadius: '5px',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                >
+                  📝 Bài viết
+                </button>
+                <button
+                  type="button"
+                  disabled={peakComments.length === 0}
+                  onClick={() => {
+                    setPreviewCardMode('comment')
+                    if (!previewCommentId && peakComments.length > 0) {
+                      setPreviewCommentId(peakComments[0].id)
+                    }
+                  }}
+                  style={{
+                    background: previewCardMode === 'comment' ? '#f59e0b' : 'transparent',
+                    color:
+                      previewCardMode === 'comment'
+                        ? '#000'
+                        : peakComments.length > 0
+                          ? '#94a3b8'
+                          : '#475569',
+                    border: 'none',
+                    padding: '3px 8px',
+                    borderRadius: '5px',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    cursor: peakComments.length > 0 ? 'pointer' : 'not-allowed'
+                  }}
+                >
+                  💬 Bình luận ({peakComments.length > 0 ? `#${previewCommentOrder}` : 0})
+                </button>
+              </div>
+
+              {previewCardMode === 'comment' && peakComments.length > 0 && (
+                <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    disabled={previewCommentOrder <= 1}
+                    onClick={() => {
+                      const curIdx = peakComments.findIndex((c) => c.id === previewCommentId)
+                      if (curIdx > 0) setPreviewCommentId(peakComments[curIdx - 1].id)
+                    }}
+                    title="Bình luận trước đó"
+                    style={{
+                      background: '#1e293b',
+                      color: previewCommentOrder <= 1 ? '#475569' : '#fff',
+                      border: 'none',
+                      borderRadius: '4px',
+                      padding: '2px 5px',
+                      fontSize: '10px',
+                      cursor: previewCommentOrder <= 1 ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    ◀
+                  </button>
+                  <button
+                    type="button"
+                    disabled={previewCommentOrder >= peakComments.length}
+                    onClick={() => {
+                      const curIdx = peakComments.findIndex((c) => c.id === previewCommentId)
+                      if (curIdx < peakComments.length - 1)
+                        setPreviewCommentId(peakComments[curIdx + 1].id)
+                    }}
+                    title="Bình luận kế tiếp"
+                    style={{
+                      background: '#1e293b',
+                      color: previewCommentOrder >= peakComments.length ? '#475569' : '#fff',
+                      border: 'none',
+                      borderRadius: '4px',
+                      padding: '2px 5px',
+                      fontSize: '10px',
+                      cursor: previewCommentOrder >= peakComments.length ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    ▶
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           <div
             style={{
               width: '270px',
@@ -1268,7 +1927,7 @@ function App(): React.JSX.Element {
               display: 'flex',
               flexDirection: 'column',
               justifyContent: 'space-between',
-              padding: '16px',
+              padding: previewTab === 'rendered' ? 0 : '16px',
               boxSizing: 'border-box',
               position: 'relative',
               overflow: 'hidden',
@@ -1282,7 +1941,14 @@ function App(): React.JSX.Element {
                 controls
                 autoPlay
                 playsInline
-                style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '16px' }}
+                preload="auto"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  borderRadius: '20px',
+                  background: '#000'
+                }}
               />
             ) : (
               <>
@@ -1337,93 +2003,193 @@ function App(): React.JSX.Element {
                 )}
 
                 {/* Top: Card Overlay Simulation */}
-                <div
-                  style={{
-                    position: 'relative',
-                    zIndex: 1,
-                    background: '#101010',
-                    border: '1px solid #282828',
-                    borderRadius: '14px',
-                    padding: '12px',
-                    marginTop: hasPostVideo ? '10px' : '36px',
-                    boxShadow: '0 10px 25px rgba(0,0,0,0.7)',
-                    transition: 'all 0.3s'
-                  }}
-                >
+                {previewCardMode === 'comment' && currentPreviewComment ? (
                   <div
                     style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      marginBottom: '8px'
+                      position: 'relative',
+                      zIndex: 1,
+                      background: '#101010',
+                      border: '1px solid #282828',
+                      borderRadius: '14px',
+                      padding: '12px',
+                      marginTop: '36px',
+                      boxShadow: '0 10px 25px rgba(0,0,0,0.7)',
+                      transition: 'all 0.3s'
                     }}
                   >
                     <div
                       style={{
-                        width: '24px',
-                        height: '24px',
-                        borderRadius: '50%',
-                        background: '#6366f1',
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '11px',
-                        fontWeight: 'bold'
+                        justifyContent: 'space-between',
+                        marginBottom: '8px'
                       }}
                     >
-                      {postData ? postData.author.username.charAt(0).toUpperCase() : 'T'}
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '11px', fontWeight: 700, color: '#fff' }}>
-                        {postData ? postData.author.username : 'threads_user'}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div
+                          style={{
+                            width: '24px',
+                            height: '24px',
+                            borderRadius: '50%',
+                            background: '#f59e0b',
+                            color: '#000',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '11px',
+                            fontWeight: 'bold'
+                          }}
+                        >
+                          {currentPreviewComment.author.username.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '11px', fontWeight: 700, color: '#fff' }}>
+                            @{currentPreviewComment.author.username}
+                          </div>
+                          <div style={{ fontSize: '9px', color: '#777' }}>1 giờ trước</div>
+                        </div>
                       </div>
-                      <div style={{ fontSize: '9px', color: '#777' }}>2 giờ trước</div>
+                      <span
+                        style={{
+                          background: '#1e3a8a',
+                          color: '#93c5fd',
+                          fontSize: '10px',
+                          fontWeight: 700,
+                          padding: '1px 6px',
+                          borderRadius: '6px'
+                        }}
+                      >
+                        Bình luận #{previewCommentOrder}
+                      </span>
                     </div>
-                  </div>
-                  <div
-                    style={{
-                      fontSize: '11px',
-                      color: '#f3f5f7',
-                      lineHeight: 1.4,
-                      maxHeight: hasPostVideo ? '60px' : hasPostImages ? '40px' : '65px',
-                      overflow: 'hidden'
-                    }}
-                  >
-                    {postData
-                      ? postData.text.slice(0, 90) + '...'
-                      : 'Nội dung bài viết Threads và 10 bình luận peak sẽ tự động hiển thị tại đây...'}
-                  </div>
 
-                  {/* Hình ảnh bài viết trong Mockup (chỉ hiển thị khi bài viết KHÔNG có video) */}
-                  {!hasPostVideo && hasPostImages && (
                     <div
                       style={{
-                        marginTop: '8px',
-                        borderRadius: '8px',
-                        overflow: 'hidden',
-                        border: '1px solid #282828',
-                        background: '#000',
-                        maxHeight: '120px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center'
+                        fontSize: '11px',
+                        color: '#f3f5f7',
+                        lineHeight: 1.4,
+                        maxHeight: previewCommentImage ? '45px' : '75px',
+                        overflow: 'hidden'
                       }}
                     >
-                      <img
-                        src={postImages[0]}
-                        alt="Post media preview"
-                        style={{
-                          width: '100%',
-                          maxHeight: '120px',
-                          objectFit: 'cover'
-                        }}
-                      />
+                      {currentPreviewComment.text}
                     </div>
-                  )}
-                </div>
 
-                {/* Video bài viết gốc hiển thị trong mockup (hiển thị riêng ở dưới thẻ bài viết với khung to hơn) */}
-                {hasPostVideo && (
+                    {previewCommentImage && (
+                      <div
+                        style={{
+                          marginTop: '8px',
+                          borderRadius: '8px',
+                          overflow: 'hidden',
+                          border: '1px solid #282828',
+                          background: '#000',
+                          maxHeight: '120px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}
+                      >
+                        <img
+                          src={previewCommentImage}
+                          alt="Comment media preview"
+                          style={{
+                            width: '100%',
+                            maxHeight: '120px',
+                            objectFit: 'cover'
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      position: 'relative',
+                      zIndex: 1,
+                      background: '#101010',
+                      border: '1px solid #282828',
+                      borderRadius: '14px',
+                      padding: '12px',
+                      marginTop: hasPostVideo ? '10px' : '36px',
+                      boxShadow: '0 10px 25px rgba(0,0,0,0.7)',
+                      transition: 'all 0.3s'
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        marginBottom: '8px'
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: '24px',
+                          height: '24px',
+                          borderRadius: '50%',
+                          background: '#6366f1',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '11px',
+                          fontWeight: 'bold'
+                        }}
+                      >
+                        {postData ? postData.author.username.charAt(0).toUpperCase() : 'T'}
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '11px', fontWeight: 700, color: '#fff' }}>
+                          {postData ? postData.author.username : 'threads_user'}
+                        </div>
+                        <div style={{ fontSize: '9px', color: '#777' }}>2 giờ trước</div>
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        fontSize: '11px',
+                        color: '#f3f5f7',
+                        lineHeight: 1.4,
+                        maxHeight: hasPostVideo ? '60px' : hasPostImages ? '40px' : '65px',
+                        overflow: 'hidden'
+                      }}
+                    >
+                      {postData
+                        ? postData.text.slice(0, 90) + '...'
+                        : 'Nội dung bài viết Threads và 10 bình luận peak sẽ tự động hiển thị tại đây...'}
+                    </div>
+
+                    {/* Hình ảnh bài viết trong Mockup (chỉ hiển thị khi bài viết KHÔNG có video) */}
+                    {!hasPostVideo && hasPostImages && (
+                      <div
+                        style={{
+                          marginTop: '8px',
+                          borderRadius: '8px',
+                          overflow: 'hidden',
+                          border: '1px solid #282828',
+                          background: '#000',
+                          maxHeight: '120px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}
+                      >
+                        <img
+                          src={postImages[0]}
+                          alt="Post media preview"
+                          style={{
+                            width: '100%',
+                            maxHeight: '120px',
+                            objectFit: 'cover'
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Video bài viết gốc hiển thị trong mockup (hiển thị khi xem bài viết gốc) */}
+                {previewCardMode === 'post' && hasPostVideo && (
                   <div
                     style={{
                       position: 'relative',
@@ -1464,14 +2230,20 @@ function App(): React.JSX.Element {
                 >
                   <div
                     style={{
-                      fontSize: '15px',
+                      fontSize: '14px',
                       fontWeight: 900,
                       color: '#ffffff',
                       textShadow: '0 2px 8px #000, 0 0 10px #000',
-                      lineHeight: 1.3
+                      lineHeight: 1.3,
+                      padding: '0 8px'
                     }}
                   >
-                    <span style={{ color: '#facc15' }}>Chữ nhảy</span> phụ đề karaoke
+                    <span style={{ color: '#facc15' }}>
+                      {previewCardMode === 'comment' && currentPreviewComment
+                        ? currentPreviewComment.text.slice(0, 32) +
+                          (currentPreviewComment.text.length > 32 ? '...' : '')
+                        : 'Chữ nhảy phụ đề karaoke'}
+                    </span>
                   </div>
                   <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '4px' }}>
                     ⚡ Đồng bộ theo giọng Edge-TTS

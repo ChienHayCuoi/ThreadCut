@@ -1,7 +1,6 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
 import {
   ThreadPostDetail,
-  ThreadComment,
   AppSettings,
   FullPipelineParams,
   VideoJobProgress,

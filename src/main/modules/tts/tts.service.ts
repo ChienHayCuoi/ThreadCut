@@ -11,8 +11,8 @@ import {
 import { WebSocket } from 'ws'
 import { TtsSegment, TtsWordTimestamp } from '../../../shared/types'
 
-// Monkey-patch _connectWebSocket trên EdgeTTS prototype để loại bỏ header `host: 'speech.platform.bing.com'`
-// Header này khiến Microsoft Edge TTS API (api.msedgeservices.com) chặn kết nối và trả về HTTP 429
+// Monkey-patch _connectWebSocket trên EdgeTTS prototype:
+// Loại bỏ header `host: 'speech.platform.bing.com'` vốn khiến Microsoft Edge TTS API trả về HTTP 429
 // @ts-ignore - Monkey patching private internal method
 EdgeTTS.prototype._connectWebSocket = function (): Promise<WebSocket> {
   const wsConnect = new WebSocket(
@@ -85,7 +85,7 @@ export class TtsService {
 
     console.log(`[TtsService] Đang tạo giọng đọc (${text.length} ký tự) với voice: ${voice}`)
 
-    const maxRetries = 3
+    const maxRetries = 5
     let lastError: unknown = null
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -104,11 +104,13 @@ export class TtsService {
         break
       } catch (err) {
         lastError = err
+        const is429 = err instanceof Error && err.message.includes('429')
+        const waitMs = is429 ? attempt * 3000 : attempt * 1000
         console.warn(
-          `[TtsService] Thử nghiệm TTS lần ${attempt}/${maxRetries} thất bại (${err}). Đang thử lại sau ${attempt * 1000}ms...`
+          `[TtsService] Thử nghiệm TTS lần ${attempt}/${maxRetries} thất bại (${err}). Đang thử lại sau ${waitMs}ms...`
         )
         if (attempt < maxRetries) {
-          await sleep(attempt * 1000)
+          await sleep(waitMs)
         }
       }
     }
@@ -209,8 +211,8 @@ export class TtsService {
 
     // 2. Audio các bình luận
     for (let i = 0; i < comments.length; i++) {
-      // Delay 800ms giữa các request để bảo đảm an toàn với Edge-TTS server
-      await sleep(800)
+      // Delay 2000ms giữa các request để bảo đảm an toàn với Edge-TTS server tránh rate limit 429
+      await sleep(2000)
 
       const c = comments[i]
       onProgress?.(i + 2, total, `Tạo giọng đọc bình luận #${i + 1} của @${c.author}`)

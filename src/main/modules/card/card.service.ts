@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron'
 import { join } from 'path'
-import { writeFileSync, existsSync, mkdirSync, readFileSync } from 'fs'
+import { writeFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'fs'
 
 export interface CardRenderOptions {
   author: string
@@ -16,6 +16,19 @@ export interface CardRenderOptions {
 }
 
 export class CardRendererService {
+  private async fetchImageAsDataUri(url: string, timeoutMs = 3500): Promise<string> {
+    if (!url || !/^https?:\/\//i.test(url)) return url
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
+      if (!res.ok) return ''
+      const contentType = res.headers.get('content-type') || 'image/jpeg'
+      const buf = Buffer.from(await res.arrayBuffer())
+      return `data:${contentType};base64,${buf.toString('base64')}`
+    } catch {
+      return ''
+    }
+  }
+
   /**
    * Tạo ảnh thẻ bài viết hoặc bình luận mô phỏng 100% giao diện Threads
    * Xuất ra file PNG có nền trong suốt (transparent) để ghép trực tiếp vào video
@@ -26,9 +39,33 @@ export class CardRendererService {
       mkdirSync(parentDir, { recursive: true })
     }
 
-    const html = this.buildThreadsHtml(options)
+    // Tải trước ảnh remote với timeout ngắn để tránh treo did-finish-load trong BrowserWindow
+    const [resolvedAvatar, resolvedImage] = await Promise.all([
+      options.avatarUrl ? this.fetchImageAsDataUri(options.avatarUrl) : Promise.resolve(''),
+      options.imageUrl && !options.localImagePath && !(options.hasVideo && options.isPost)
+        ? this.fetchImageAsDataUri(options.imageUrl)
+        : Promise.resolve('')
+    ])
+
+    const html = this.buildThreadsHtml({
+      ...options,
+      avatarUrl: resolvedAvatar || undefined,
+      imageUrl: resolvedImage || undefined
+    })
+
+    const tmpHtmlPath = `${destFilePath}.tmp.html`
+    writeFileSync(tmpHtmlPath, html, 'utf-8')
+
+    const cleanupTmp = (): void => {
+      try {
+        if (existsSync(tmpHtmlPath)) unlinkSync(tmpHtmlPath)
+      } catch {
+        // ignore cleanup error
+      }
+    }
 
     return new Promise((resolve, reject) => {
+      let settled = false
       let win: BrowserWindow | null = new BrowserWindow({
         width: 1000,
         height: 1400,
@@ -41,17 +78,29 @@ export class CardRendererService {
         }
       })
 
-      const timeout = setTimeout(() => {
+      const finishReject = (err: unknown): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
         if (win && !win.isDestroyed()) {
           win.destroy()
-          win = null
-          reject(new Error('Render card timeout sau 8s'))
         }
-      }, 8000)
+        win = null
+        cleanupTmp()
+        reject(err)
+      }
+
+      const timeout = setTimeout(() => {
+        finishReject(new Error('Render card timeout sau 15s'))
+      }, 15000)
+
+      win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+        finishReject(new Error(`Render card load failed (${errorCode}): ${errorDescription}`))
+      })
 
       win.webContents.on('did-finish-load', async () => {
         setTimeout(async () => {
-          if (!win || win.isDestroyed()) return
+          if (settled || !win || win.isDestroyed()) return
           clearTimeout(timeout)
           try {
             // Lấy kích thước chính xác của thẻ card trong DOM
@@ -73,18 +122,18 @@ export class CardRendererService {
             const pngBuffer = image.toPNG()
             writeFileSync(destFilePath, pngBuffer)
 
+            settled = true
             win.destroy()
             win = null
+            cleanupTmp()
             resolve(destFilePath)
           } catch (e) {
-            win?.destroy()
-            win = null
-            reject(e)
+            finishReject(e)
           }
-        }, 400)
+        }, 300)
       })
 
-      win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+      win.loadFile(tmpHtmlPath).catch(finishReject)
     })
   }
 

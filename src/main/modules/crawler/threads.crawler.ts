@@ -13,6 +13,7 @@ export class ThreadsCrawler {
 
     // Chuẩn hóa URL
     let cleanUrl = url.trim().split('?')[0]
+    cleanUrl = cleanUrl.replace(/^(https?:\/\/)?(www\.)?threads\.com/i, 'https://www.threads.net')
     if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
       cleanUrl = 'https://' + cleanUrl
     }
@@ -170,9 +171,15 @@ export class ThreadsCrawler {
 
       const rawArticles = (await win.webContents.executeJavaScript(`
         (() => {
-          const articles = Array.from(document.querySelectorAll('article, [data-pressable-container="true"]'));
-          return articles.map((art) => {
-            const userLink = art.querySelector('a[href*="/@"]');
+          let containers = Array.from(document.querySelectorAll('article'));
+          if (containers.length === 0) {
+            containers = Array.from(document.querySelectorAll('[data-pressable-container="true"]'));
+          }
+          containers = containers.filter(c => c.querySelector('a[href*="/@"]'));
+          containers = containers.filter(c => !containers.some(other => other !== c && other.contains(c)));
+
+          return containers.map((c, i) => {
+            const userLink = c.querySelector('a[href*="/@"]');
             let domUser = '';
             if (userLink) {
               const href = userLink.getAttribute('href') || '';
@@ -180,12 +187,12 @@ export class ThreadsCrawler {
               if (match) domUser = match[1];
             }
 
-            const avatarEl = art.querySelector('a[href*="/@"] img, img[alt*="profile" i], img[alt*="avatar" i]') || art.querySelector('img');
+            const avatarEl = c.querySelector('a[href*="/@"] img, img[alt*="profile" i], img[alt*="avatar" i]') || c.querySelector('img');
             const avatarSrc = avatarEl ? (avatarEl.currentSrc || avatarEl.src || '') : '';
 
             let videoUrl = '';
             let videoPoster = '';
-            const videoEl = art.querySelector('video');
+            const videoEl = c.querySelector('video');
             const hasVideo = Boolean(videoEl);
             if (videoEl) {
               videoUrl = videoEl.currentSrc || videoEl.src || '';
@@ -196,7 +203,7 @@ export class ThreadsCrawler {
               videoPoster = videoEl.poster || '';
             }
 
-            const allImgs = Array.from(art.querySelectorAll('img'));
+            const allImgs = Array.from(c.querySelectorAll('img'));
             const contentImages = [];
             // Nếu bài viết hoặc comment có video thì không lấy ảnh đính kèm (để tránh lấy nhầm poster/thumbnail video)
             if (!hasVideo) {
@@ -220,7 +227,7 @@ export class ThreadsCrawler {
                 }
               }
 
-              const bgElements = Array.from(art.querySelectorAll('[style*="background-image"]'));
+              const bgElements = Array.from(c.querySelectorAll('[style*="background-image"]'));
               for (const bgEl of bgElements) {
                 const bg = bgEl.style.backgroundImage || '';
                 const m = bg.match(/url\\(["']?(https?:[^"']+)["']?\\)/);
@@ -230,13 +237,61 @@ export class ThreadsCrawler {
               }
             }
 
+            // Bóc tách nội dung văn bản chuẩn xác trực tiếp từ các phần tử [dir="auto"]
+            let contentText = '';
+            const dirEls = Array.from(c.querySelectorAll('[dir="auto"]'));
+            for (const el of dirEls) {
+              const clone = el.cloneNode(true);
+              const transBtns = clone.querySelectorAll('button, [role="button"]');
+              transBtns.forEach(b => {
+                const bt = (b.innerText || '').toLowerCase();
+                if (bt.includes('translate') || bt.includes('dịch') || bt.includes('original')) {
+                  b.remove();
+                }
+              });
+
+              let t = (clone.innerText || '').trim();
+              t = t.replace(/\\s*(Translate|Dịch|See translation|Xem bản dịch)$/i, '').trim();
+
+              if (!t || t.toLowerCase() === domUser.toLowerCase() || t === 'Author' || t === 'Tác giả' || t === '·') continue;
+              if (/^[0-9]+[smhdw]$/i.test(t)) continue;
+              if (/^[0-9.,]+[KMB]?$/i.test(t)) continue;
+              if (/^(Follow|Following|Theo dõi|Đang theo dõi)$/i.test(t)) continue;
+              if (/^(Like|Reply|Repost|Share|Save|Sort|Top|More)$/i.test(t)) continue;
+              if (/^(View activity|Xem hoạt động|Reply to|Trả lời)/i.test(t)) continue;
+
+              if (t.length > contentText.length) {
+                contentText = t;
+              }
+            }
+
+            // Fallback cho bài viết đầu tiên nếu chưa có
+            if (i === 0 && !contentText && document.title) {
+              contentText = document.title.replace(/\\s*•\\s*Threads$/i, '').trim();
+            }
+
+            // Lấy likes count từ các dòng số tương tác ở cuối container
+            const allLines = (c.innerText || '').split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);
+            const metricNums = [];
+            for (let j = allLines.length - 1; j >= 0; j--) {
+              const l = allLines[j];
+              if (/^[0-9.,]+[KMB]?$/i.test(l) && !/^[0-9]+[smhdw]$/i.test(l)) {
+                metricNums.unshift(l);
+              } else if (metricNums.length > 0) {
+                break;
+              }
+            }
+            const likesStr = metricNums.length > 0 ? metricNums[0] : '0';
+
             return {
-              text: art.innerText || '',
+              text: contentText || (c.innerText || '').trim(),
               avatar: avatarSrc,
               domUser,
               hasVideo,
               videoUrl,
-              images: contentImages
+              videoPoster,
+              images: contentImages,
+              likesStr
             };
           });
         })()
@@ -246,7 +301,9 @@ export class ThreadsCrawler {
         domUser: string
         hasVideo: boolean
         videoUrl?: string
+        videoPoster?: string
         images?: string[]
+        likesStr?: string
       }>
 
       if (Array.isArray(rawArticles) && rawArticles.length > 0) {
@@ -255,7 +312,7 @@ export class ThreadsCrawler {
         const urlUser = urlMatch ? urlMatch[1] : ''
 
         // 1. Phân tích bài viết gốc (Article đầu tiên)
-        const first = this.parseArticleText(rawArticles[0].text)
+        const first = this.parseArticleText(rawArticles[0].text, rawArticles[0].domUser || urlUser)
         const mainAuthor = rawArticles[0].domUser || first.username || urlUser || 'threads_user'
         const mainText = first.content || 'Nội dung bài viết Threads'
         const mainAvatar = rawArticles[0].avatar || ''
@@ -309,7 +366,7 @@ export class ThreadsCrawler {
         const comments: ThreadComment[] = []
         for (let i = 1; i < rawArticles.length && comments.length < 35; i++) {
           const raw = rawArticles[i]
-          const item = this.parseArticleText(raw.text)
+          const item = this.parseArticleText(raw.text, raw.domUser)
           const commentUser = raw.domUser || item.username || `user_${i}`
           if (item.content && item.content !== mainText) {
             const commentImages = raw.images || []
@@ -410,7 +467,10 @@ export class ThreadsCrawler {
    * Dòng giữa: Nội dung văn bản bài viết / bình luận
    * Dòng cuối: Nút hành động và chỉ số tương tác (Like, Reply, Repost, Share)
    */
-  private parseArticleText(rawText: string): {
+  private parseArticleText(
+    rawText: string,
+    domUser?: string
+  ): {
     username: string
     content: string
     likesCount: number
@@ -428,48 +488,126 @@ export class ThreadsCrawler {
     if (lines[idx].toLowerCase() === 'pinned' || lines[idx].toLowerCase() === 'đã ghim') {
       idx++
     }
-    const username = lines[idx] ? lines[idx].replace('@', '') : ''
-    idx++
 
-    // Bỏ qua dòng timestamp (vd: "18h", "15m", "2d", "17 giờ", "vài giây trước", "15 phút trước")
+    let username = ''
+    if (idx < lines.length) {
+      const candidate = lines[idx].replace(/^@/, '')
+      // Nếu dòng này khớp với domUser hoặc có dạng username không chứa khoảng trắng
+      if (domUser && candidate.toLowerCase() === domUser.toLowerCase()) {
+        username = candidate
+        idx++
+      } else if (!candidate.includes(' ') && candidate.length > 0 && candidate.length < 40) {
+        username = candidate
+        idx++
+      }
+    }
+
+    // Bỏ qua Pinned nếu xuất hiện sau username
     if (
       idx < lines.length &&
-      /^(\d+[smhdw]|vài|hôm|người|\d+\s*(giờ|ngày|phút|giây))/i.test(lines[idx])
+      (lines[idx].toLowerCase() === 'pinned' || lines[idx].toLowerCase() === 'đã ghim')
     ) {
       idx++
     }
 
-    // Cắt bỏ các dòng chỉ số tương tác và action ở cuối bài
+    // Bỏ qua dòng Follow / Theo dõi nếu có
+    if (
+      idx < lines.length &&
+      /^(follow|theo\s*dõi|đang\s*theo\s*dõi|following)$/i.test(lines[idx])
+    ) {
+      idx++
+    }
+
+    // Bỏ qua dòng timestamp (vd: "18h", "15m", "2d", "17 giờ", "vài giây trước", "15 phút trước")
+    if (
+      idx < lines.length &&
+      /^(\d+[smhdw]|vài|hôm|người|just|vừa|\d+\s*(giờ|ngày|phút|giây|h|m|s|d|w|y))/i.test(lines[idx])
+    ) {
+      idx++
+    }
+
+    const isFooterOrActionLine = (line: string): boolean => {
+      const lower = line.toLowerCase().trim()
+      // 1. Chỉ số tương tác (1.1K, 89, 47, 52, 10M, 1,234)
+      if (/^[\d.,]+[kmb]?$/i.test(lower)) return true
+
+      // 2. Nút dịch bài viết (Translate, Dịch, See translation, Xem bản dịch,...)
+      if (
+        /^(translate|dịch|see\s+translation|xem\s+bản\s+dịch|bản\s+gốc|original)(\s+(post|bài\s+viết))?$/i.test(
+          lower
+        )
+      ) {
+        return true
+      }
+
+      // 3. Khung trả lời (vd: Reply to 2909_lhp..., Trả lời 2909_lhp..., Reply..., Trả lời...)
+      if (/^(reply(\s+to)?|trả\s+lời(\s+cho)?)\b/i.test(lower)) {
+        return true
+      }
+
+      // 4. Xem hoạt động / insights (vd: View activity, Xem hoạt động, View insights, Activity, Hoạt động)
+      if (
+        /^(view\s+activity|xem\s+hoạt\s+động|view\s+insights|xem\s+thông\s+tin\s+chi\s+tiết|activity|hoạt\s+động)$/i.test(
+          lower
+        )
+      ) {
+        return true
+      }
+
+      // 5. Bộ lọc sắp xếp bình luận (Top, Recent, Phổ biến nhất, Mới nhất, Tất cả, Cũ nhất)
+      if (
+        /^(top|recent|phổ\s+biến(\s+nhất)?|mới(\s+nhất)?|oldest|cũ\s+nhất|all|tất\s+cả)$/i.test(
+          lower
+        )
+      ) {
+        return true
+      }
+
+      // 6. Nút hành động tương tác
+      if (/^(like|reply|share|repost|thích|trả\s+lời|chia\s+sẻ|đăng\s+lại)$/i.test(lower)) {
+        return true
+      }
+
+      // 7. Xem thêm câu trả lời (vd: View replies, Xem câu trả lời, Hiển thị 5 câu trả lời)
+      if (
+        /^(view|xem|hiển\s+thị|ẩn|hide|show)\s+(more\s+)?(\d+\s+)?(câu\s+trả\s+lời|replies|reply|thêm)/i.test(
+          lower
+        )
+      ) {
+        return true
+      }
+
+      // 8. Đăng nhập / ứng dụng / thông báo
+      if (/^(log\s+in\s+to|đăng\s+nhập\s+để|open\s+app|mở\s+ứng\s+dụng)/i.test(lower)) {
+        return true
+      }
+
+      return false
+    }
+
     let endIdx = lines.length
     const trailingMetrics: string[] = []
 
     while (endIdx > idx) {
       const line = lines[endIdx - 1]
-      const lower = line.toLowerCase()
-
-      const isActionText =
-        [
-          'translate',
-          'dịch',
-          'reply',
-          'like',
-          'share',
-          'repost',
-          'thích',
-          'trả lời',
-          'view replies',
-          'hiển thị câu trả lời',
-          'xem câu trả lời',
-          'xem thêm'
-        ].includes(lower) || /^hiển thị \d+ câu trả lời/i.test(lower)
-
-      const isMetricNumber = /^[\d.,]+[KMBkmb]?$/.test(line)
-
-      if (isActionText || isMetricNumber) {
-        if (isMetricNumber) {
-          // Thêm vào đầu để giữ nguyên thứ tự xuất hiện từ trên xuống dưới (Like -> Reply -> Repost -> Share)
+      if (isFooterOrActionLine(line)) {
+        if (/^[\d.,]+[kmb]?$/i.test(line)) {
           trailingMetrics.unshift(line)
         }
+        endIdx--
+      } else {
+        break
+      }
+    }
+
+    // Quét thêm một lượt nếu cuối bài vẫn còn chữ Translate / Dịch / Xem bản dịch bị sót
+    while (endIdx > idx) {
+      const lastLine = lines[endIdx - 1].trim().toLowerCase()
+      if (
+        /^(translate|dịch|see\s+translation|xem\s+bản\s+dịch|bản\s+gốc|original)(\s+(post|bài\s+viết))?$/i.test(
+          lastLine
+        )
+      ) {
         endIdx--
       } else {
         break

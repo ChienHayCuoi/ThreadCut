@@ -195,10 +195,15 @@ export class ThreadsCrawler {
             const videoEl = c.querySelector('video');
             const hasVideo = Boolean(videoEl);
             if (videoEl) {
-              videoUrl = videoEl.currentSrc || videoEl.src || '';
+              const candidateSrc = videoEl.currentSrc || videoEl.src || '';
+              if (candidateSrc && !candidateSrc.startsWith('blob:')) {
+                videoUrl = candidateSrc;
+              }
               if (!videoUrl) {
                 const srcEl = videoEl.querySelector('source');
-                if (srcEl) videoUrl = srcEl.src || '';
+                if (srcEl && srcEl.src && !srcEl.src.startsWith('blob:')) {
+                  videoUrl = srcEl.src;
+                }
               }
               videoPoster = videoEl.poster || '';
             }
@@ -318,10 +323,22 @@ export class ThreadsCrawler {
         const mainAvatar = rawArticles[0].avatar || ''
         const mainLikes = first.likesCount
 
-        // 1.1 Tìm URL video của bài viết gốc (chỉ nhận khi chính bài viết có thẻ video)
+        // 1.1 Tìm URL video của bài viết gốc (từ DOM, JSON payload của Threads, og:video hoặc network)
+        const postCodeMatch = url.match(/\/post\/([^/?#]+)/)
+        const postCode = postCodeMatch ? postCodeMatch[1] : ''
+        const embeddedVideoUrl = await this.extractEmbeddedPostVideoUrl(win, postCode)
+
+        const domVideoUrl =
+          rawArticles[0].videoUrl && !rawArticles[0].videoUrl.startsWith('blob:')
+            ? rawArticles[0].videoUrl
+            : undefined
+        const networkVideoUrl = detectedVideoUrls.find(
+          (u) => !u.includes('bytestart=') && !u.includes('byteend=')
+        ) || detectedVideoUrls[0]
+
         let mainVideoUrl: string | undefined = undefined
-        if (rawArticles[0].hasVideo) {
-          mainVideoUrl = rawArticles[0].videoUrl || detectedVideoUrls[0] || undefined
+        if (rawArticles[0].hasVideo || embeddedVideoUrl) {
+          mainVideoUrl = domVideoUrl || embeddedVideoUrl || networkVideoUrl || undefined
         }
         let localVideoPath: string | undefined = undefined
 
@@ -452,8 +469,75 @@ export class ThreadsCrawler {
     }
   }
 
+  /**
+   * Bóc tách URL video MP4 trực tiếp từ JSON payload (Relay <script type="application/json">)
+   * hoặc thẻ <meta property="og:video"> của bài viết Threads (tránh trường hợp <video> dùng blob:).
+   */
+  private async extractEmbeddedPostVideoUrl(
+    win: BrowserWindow,
+    postCode: string
+  ): Promise<string | undefined> {
+    try {
+      const found = (await win.webContents.executeJavaScript(`
+        (() => {
+          const postCode = ${JSON.stringify(postCode)};
+
+          const findVideoInNode = (node, depth = 0, matched = !postCode) => {
+            if (!node || typeof node !== 'object' || depth > 25) return '';
+            if (Array.isArray(node)) {
+              for (const item of node) {
+                const res = findVideoInNode(item, depth + 1, matched);
+                if (res) return res;
+              }
+              return '';
+            }
+            const isPostMatch = matched || node.code === postCode;
+            if (isPostMatch && Array.isArray(node.video_versions) && node.video_versions.length > 0) {
+              const first = node.video_versions.find(v => v && typeof v.url === 'string');
+              if (first) return first.url;
+            }
+            for (const key of Object.keys(node)) {
+              const res = findVideoInNode(node[key], depth + 1, isPostMatch);
+              if (res) return res;
+            }
+            return '';
+          };
+
+          const scripts = Array.from(document.querySelectorAll('script[type="application/json"]'));
+          for (const s of scripts) {
+            const raw = s.textContent || '';
+            if (!raw.includes('video_versions')) continue;
+            if (postCode && !raw.includes(postCode)) continue;
+            try {
+              const parsed = JSON.parse(raw);
+              const url = findVideoInNode(parsed);
+              if (url) return url;
+            } catch {}
+          }
+
+          const ogVideo = document.querySelector('meta[property="og:video"], meta[property="og:video:url"]');
+          if (ogVideo) {
+            const content = ogVideo.getAttribute('content') || '';
+            if (content.startsWith('http')) return content;
+          }
+
+          return '';
+        })()
+      `)) as string
+      return found || undefined
+    } catch {
+      return undefined
+    }
+  }
+
   private async downloadFile(url: string, destPath: string): Promise<string> {
-    const res = await fetch(url)
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+        Referer: 'https://www.threads.net/'
+      }
+    })
     if (!res.ok) throw new Error(`HTTP ${res.status} when downloading file: ${url}`)
     const arrayBuffer = await res.arrayBuffer()
     writeFileSync(destPath, Buffer.from(arrayBuffer))

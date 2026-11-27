@@ -922,9 +922,13 @@ function App(): React.JSX.Element {
                         src={imgSrc}
                         alt={`Post image ${imgIdx + 1}`}
                         style={{
-                          maxHeight: '160px',
+                          maxHeight: '200px',
+                          maxWidth: '100%',
+                          width: 'auto',
+                          height: 'auto',
                           borderRadius: '6px',
-                          objectFit: 'cover',
+                          objectFit: 'contain',
+                          display: 'block',
                           border: '1px solid #1e293b'
                         }}
                       />
@@ -2106,7 +2110,7 @@ function App(): React.JSX.Element {
                       border: '1px solid #282828',
                       borderRadius: '14px',
                       padding: '12px',
-                      marginTop: '36px',
+                      marginTop: previewCommentImage ? '16px' : '36px',
                       boxShadow: '0 10px 25px rgba(0,0,0,0.7)',
                       transition: 'all 0.3s'
                     }}
@@ -2176,8 +2180,8 @@ function App(): React.JSX.Element {
                           borderRadius: '8px',
                           overflow: 'hidden',
                           border: '1px solid #282828',
-                          background: '#000',
-                          maxHeight: '120px',
+                          background: '#050505',
+                          maxHeight: '220px',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center'
@@ -2187,9 +2191,12 @@ function App(): React.JSX.Element {
                           src={previewCommentImage}
                           alt="Comment media preview"
                           style={{
-                            width: '100%',
-                            maxHeight: '120px',
-                            objectFit: 'cover'
+                            maxWidth: '100%',
+                            maxHeight: '220px',
+                            width: 'auto',
+                            height: 'auto',
+                            objectFit: 'contain',
+                            display: 'block'
                           }}
                         />
                       </div>
@@ -2204,7 +2211,7 @@ function App(): React.JSX.Element {
                       border: '1px solid #282828',
                       borderRadius: '14px',
                       padding: '12px',
-                      marginTop: hasPostVideo ? '10px' : '36px',
+                      marginTop: hasPostVideo ? '10px' : hasPostImages ? '16px' : '36px',
                       boxShadow: '0 10px 25px rgba(0,0,0,0.7)',
                       transition: 'all 0.3s'
                     }}
@@ -2261,8 +2268,8 @@ function App(): React.JSX.Element {
                           borderRadius: '8px',
                           overflow: 'hidden',
                           border: '1px solid #282828',
-                          background: '#000',
-                          maxHeight: '120px',
+                          background: '#050505',
+                          maxHeight: '220px',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center'
@@ -2272,9 +2279,12 @@ function App(): React.JSX.Element {
                           src={postImages[0]}
                           alt="Post media preview"
                           style={{
-                            width: '100%',
-                            maxHeight: '120px',
-                            objectFit: 'cover'
+                            maxWidth: '100%',
+                            maxHeight: '220px',
+                            width: 'auto',
+                            height: 'auto',
+                            objectFit: 'contain',
+                            display: 'block'
                           }}
                         />
                       </div>

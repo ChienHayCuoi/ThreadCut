@@ -344,7 +344,7 @@ export class VideoRendererService {
         const hasCardMedia = Boolean(
           st.segment.mediaImagePath && existsSync(st.segment.mediaImagePath)
         )
-        const cardY = hasCardMedia ? 260 : 360
+        const cardY = hasCardMedia ? 160 : 360
         filterParts.push(
           `[${currentVideoLabel}][${inputIdx}:v]overlay=(W-w)/2:${cardY}:enable='${enableClause}'[${nextLabel}]`
         )

@@ -68,7 +68,7 @@ export class CardRendererService {
       let settled = false
       let win: BrowserWindow | null = new BrowserWindow({
         width: 1000,
-        height: 1400,
+        height: 1700,
         show: false,
         frame: false,
         transparent: true,
@@ -178,7 +178,7 @@ export class CardRendererService {
       mediaImgSrc = ''
     }
 
-    const maxImgHeight = '440px'
+    const maxImgHeight = '720px'
 
     return `
 <!DOCTYPE html>
@@ -279,9 +279,11 @@ export class CardRendererService {
       justify-content: center;
     }
     .media-img {
-      width: 100%;
+      max-width: 100%;
       max-height: ${maxImgHeight};
-      object-fit: cover;
+      width: auto;
+      height: auto;
+      object-fit: contain;
       display: block;
     }
     .footer {
